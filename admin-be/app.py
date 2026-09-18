@@ -33,6 +33,7 @@ from packages.omni_rag_core.vector_store import QdrantVectorStore, ResilientVect
 
 MAX_UPLOAD_BYTES = 40 * 1024 * 1024
 MAX_LOGO_BYTES = 512 * 1024
+MAX_CHAT_SESSION_DATE_RANGE_DAYS = 14
 LOGO_MIME_TYPES = {"image/png", "image/jpeg", "image/svg+xml"}
 
 
@@ -254,23 +255,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def list_chat_sessions(
         request: Request,
         company_id: str = Query(...),
-        date_from: date | None = Query(default=None),
-        date_to: date | None = Query(default=None),
+        date_from: date = Query(...),
+        date_to: date = Query(...),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, ge=1, le=100),
     ) -> ChatSessionPage:
         if not request.app.state.repository.get_company(company_id):
             raise HTTPException(404, "Company not found")
-        if date_from and date_to and date_from > date_to:
+        if date_from > date_to:
             raise HTTPException(422, "date_from must not be after date_to")
-        created_from = (
-            datetime.combine(date_from, time.min, tzinfo=timezone.utc) if date_from else None
-        )
-        created_to = (
-            datetime.combine(date_to + timedelta(days=1), time.min, tzinfo=timezone.utc)
-            if date_to
-            else None
-        )
+        if (date_to - date_from).days >= MAX_CHAT_SESSION_DATE_RANGE_DAYS:
+            raise HTTPException(
+                422,
+                f"Chat session date range cannot exceed {MAX_CHAT_SESSION_DATE_RANGE_DAYS} days",
+            )
+        created_from = datetime.combine(date_from, time.min, tzinfo=timezone.utc)
+        created_to = datetime.combine(date_to + timedelta(days=1), time.min, tzinfo=timezone.utc)
         repository = request.app.state.repository
         total = repository.count_chat_sessions(
             company_id, created_from=created_from, created_to=created_to
