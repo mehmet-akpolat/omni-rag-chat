@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chatbotLaunchUrl, dateInputValue, formatClock, formatCreatedAt, formatSessionDuration, rangeToPages, shiftDateInput, shouldAutoExpandImport, validateGreetingTemplate } from './App';
+import { chatbotLaunchUrl, dateInputValue, formatClock, formatCreatedAt, formatSessionDuration, isUrlMime, rangeToPages, shiftDateInput, shouldAutoExpandImport, supportsUrlImport, validateGreetingTemplate } from './App';
 describe('chatbotLaunchUrl', () => { it('creates a session-specific chat URL', () => { expect(chatbotLaunchUrl('session/a', 'https://chat.example.test')).toBe('https://chat.example.test?session_id=session%2Fa'); }); });
 describe('rangeToPages', () => { it('parses and clamps page ranges', () => { expect(rangeToPages('1-3, 7, 12-15, nope', 12)).toEqual([1,2,3,7,12]); }); });
 describe('formatCreatedAt', () => { it('formats a stored creation timestamp', () => { expect(formatCreatedAt('2026-09-16T10:30:00Z')).toContain('2026'); }); });
@@ -20,6 +20,22 @@ describe('shouldAutoExpandImport', () => {
     expect(shouldAutoExpandImport(0, '')).toBe(true);
     expect(shouldAutoExpandImport(1, '')).toBe(false);
     expect(shouldAutoExpandImport(0, 'missing')).toBe(false);
+  });
+});
+
+describe('supportsUrlImport', () => {
+  it('allows only structure-aware URL strategies', () => {
+    expect(supportsUrlImport('recursive')).toBe(true);
+    expect(supportsUrlImport('hierarchical')).toBe(true);
+    expect(supportsUrlImport('fixed')).toBe(false);
+    expect(supportsUrlImport('semantic')).toBe(false);
+  });
+});
+describe('isUrlMime', () => {
+  it('derives URL sources from MIME type', () => {
+    expect(isUrlMime('text/html')).toBe(true);
+    expect(isUrlMime('application/xhtml+xml')).toBe(true);
+    expect(isUrlMime('application/pdf')).toBe(false);
   });
 });
 describe('validateGreetingTemplate', () => {

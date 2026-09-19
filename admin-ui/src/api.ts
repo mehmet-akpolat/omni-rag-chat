@@ -11,6 +11,9 @@ export async function previewPdf(file: File, companyId: string, signal?: AbortSi
   const data = new FormData(); data.append('file', file); data.append('company_id', companyId);
   return checked(await fetch(`${BASE}/documents/preview`, { method: 'POST', body: data, signal }));
 }
+export async function previewUrl(url: string, companyId: string, signal?: AbortSignal): Promise<Preview> {
+  return checked(await fetch(`${BASE}/urls/preview`, {method:'POST', headers:{'Content-Type':'application/json'}, signal, body:JSON.stringify({url, company_id:companyId})}));
+}
 export async function importKnowledgeBase(payload: {document_id: string; company_id: string; name: string; pages: {included_pages: number[]; excluded_pages: number[]}; chunking: {strategy: Strategy; chunk_size: number; overlap: number; similarity_threshold: number; parent_size: number}}): Promise<KnowledgeBase> {
   return checked(await fetch(`${BASE}/knowledge-bases`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) }));
 }
@@ -30,6 +33,12 @@ export async function listChatSessions(companyId: string, dateFrom: string, date
   return checked(await fetch(`${BASE}/chat-sessions?${query}`));
 }
 export async function getChatSession(id: string): Promise<ChatSessionDetail> { return checked(await fetch(`${BASE}/chat-sessions/${encodeURIComponent(id)}`)); }
+export async function deleteChatSessions(companyId: string, sessionIds: string[]): Promise<{deleted: number}> {
+  return checked(await fetch(`${BASE}/chat-sessions`, {method:'DELETE', headers:{'Content-Type':'application/json'}, body:JSON.stringify({company_id:companyId, session_ids:sessionIds})}));
+}
+export async function deleteFilteredChatSessions(companyId: string, dateFrom: string, dateTo: string): Promise<{deleted: number}> {
+  return checked(await fetch(`${BASE}/chat-sessions`, {method:'DELETE', headers:{'Content-Type':'application/json'}, body:JSON.stringify({company_id:companyId, date_from:dateFrom, date_to:dateTo})}));
+}
 export function companyLogoUrl(id: string): string { return `${BASE}/companies/${id}/logo`; }
 export async function saveCompany(company: Partial<Company> & Pick<Company, 'name'>): Promise<Company> {
   const existing = Boolean(company.id);

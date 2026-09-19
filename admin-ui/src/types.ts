@@ -1,9 +1,10 @@
 export type Strategy = 'fixed' | 'recursive' | 'semantic' | 'hierarchical';
 export interface PagePreview { page_number: number; excerpt: string }
-export interface Preview { document_id: string; filename: string; mime_type: string; total_pages: number; pages: PagePreview[] }
+export type KnowledgeSourceType = 'pdf' | 'url';
+export interface Preview { document_id: string; source: string; mime_type: string; total_pages: number; pages: PagePreview[]; title?: string; replaces_knowledge_base_id?: string }
 export type BotAvatar = 'bot' | 'brain' | 'headset' | 'book';
 export interface Company { id: string; name: string; has_logo: boolean; logo_mime_type?: string; about: string; phone: string; email: string; address: string; maps_url?: string; bot_alias: string; bot_avatar: BotAvatar; bot_greet_message: string; created_at: string }
-export interface KnowledgeBase { id: string; company_id: string; name: string; filename: string; mime_type: string; total_pages: number; excluded_pages: number[]; selected_pages: number; chunk_count: number; status: 'enabled' | 'disabled' | 'indexing'; created_at: string; chunking: { strategy: Strategy; chunk_size: number; overlap: number; similarity_threshold: number; parent_size: number } }
+export interface KnowledgeBase { id: string; company_id: string; name: string; source: string; mime_type: string; total_pages: number | null; excluded_pages: number[] | null; selected_pages: number | null; chunk_count: number; status: 'enabled' | 'disabled' | 'indexing'; created_at: string; chunking: { strategy: Strategy; chunk_size: number; overlap: number; similarity_threshold: number; parent_size: number } }
 export interface KnowledgeBasePage { items: KnowledgeBase[]; page: number; page_size: number; total: number; total_pages: number }
 export type ChatSessionStatus = 'active' | 'closed' | 'timeout';
 export interface ChatSession { id: string; company_id: string; status: ChatSessionStatus; ip_address: string; created_at: string; ended_at?: string; message_count: number }

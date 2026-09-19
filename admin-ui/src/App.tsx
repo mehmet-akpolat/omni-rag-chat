@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, BookOpenCheck, Bot, BrainCircuit, Building2, CalendarDays, Check, ChevronDown, ChevronUp, CirclePause, CirclePlay, Eye, FileText, Headset, ImagePlus, Layers3, Library, Mail, MapPin, MapPinned, MessageSquareText, Moon, Pencil, Phone, RefreshCw, RotateCcw, Search, Settings2, Sparkles, Sun, Trash2, UploadCloud, UserRound, X } from 'lucide-react';
-import { companyLogoUrl, createChatSession, deleteCompany, deleteCompanyLogo, deleteKnowledgeBase, getChatSession, importKnowledgeBase, listChatSessions, listCompanies, listKnowledgeBases, previewPdf, saveCompany, saveCompanyLogo, setKnowledgeBaseEnabled } from './api';
-import type { BotAvatar, ChatSession, ChatSessionDetail, Company, KnowledgeBase, Preview, Strategy } from './types';
+import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, BookOpenCheck, Bot, BrainCircuit, Building2, CalendarDays, Check, ChevronDown, ChevronUp, CirclePause, CirclePlay, Eye, FileText, Globe2, Headset, ImagePlus, Layers3, Library, Link2, Mail, MapPin, MapPinned, MessageSquareText, Moon, Pencil, Phone, RefreshCw, RotateCcw, Search, Settings2, Sparkles, Sun, Trash2, UploadCloud, UserRound, X } from 'lucide-react';
+import { companyLogoUrl, createChatSession, deleteChatSessions, deleteCompany, deleteCompanyLogo, deleteFilteredChatSessions, deleteKnowledgeBase, getChatSession, importKnowledgeBase, listChatSessions, listCompanies, listKnowledgeBases, previewPdf, previewUrl, saveCompany, saveCompanyLogo, setKnowledgeBaseEnabled } from './api';
+import type { BotAvatar, ChatSession, ChatSessionDetail, Company, KnowledgeBase, KnowledgeSourceType, Preview, Strategy } from './types';
 
 const strategies: {id: Strategy; name: string; caption: string}[] = [
   {id: 'fixed', name: 'Fixed-size', caption: 'Consistent, predictable windows'},
   {id: 'recursive', name: 'Recursive', caption: 'Preserve natural text structure'},
-  {id: 'semantic', name: 'Semantic', caption: 'Group passages by meaning'},
+  {id: 'semantic', name: 'Semantic', caption: 'Keep neighboring paragraphs together'},
   {id: 'hierarchical', name: 'Hierarchical', caption: 'Parent and child context layers'},
 ];
 
@@ -70,6 +70,14 @@ export function shouldAutoExpandImport(total: number, query: string): boolean {
   return !query.trim() && total === 0;
 }
 
+export function supportsUrlImport(strategy: Strategy): boolean {
+  return strategy === 'recursive' || strategy === 'hierarchical';
+}
+
+export function isUrlMime(mimeType: string): boolean {
+  return mimeType === 'text/html' || mimeType === 'application/xhtml+xml';
+}
+
 export function chatbotLaunchUrl(sessionId: string, baseUrl = CHATBOT_UI_URL): string {
   const separator = baseUrl.includes('?') ? '&' : '?';
   return `${baseUrl}${separator}session_id=${encodeURIComponent(sessionId)}`;
@@ -120,6 +128,8 @@ export function App() {
   const [dark, setDark] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [sourceType, setSourceType] = useState<KnowledgeSourceType>('pdf');
+  const [sourceUrl, setSourceUrl] = useState('');
   const [name, setName] = useState('');
   const [strategy, setStrategy] = useState<Strategy>('recursive');
   const [include, setInclude] = useState('');
@@ -148,12 +158,16 @@ export function App() {
   const [activeCompanyId, setActiveCompanyId] = useState('');
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [chatSessionPage, setChatSessionPage] = useState(1);
-  const [chatSessionPageSize, setChatSessionPageSize] = useState(10);
+  const [chatSessionPageSize, setChatSessionPageSize] = useState(5);
   const [chatSessionTotal, setChatSessionTotal] = useState(0);
   const [chatSessionTotalPages, setChatSessionTotalPages] = useState(0);
   const [chatSessionsLoading, setChatSessionsLoading] = useState(false);
   const [chatSessionError, setChatSessionError] = useState('');
   const [selectedChatSession, setSelectedChatSession] = useState<ChatSessionDetail | null>(null);
+  const [selectedChatSessionIds, setSelectedChatSessionIds] = useState<Set<string>>(new Set());
+  const [chatSessionsToDelete, setChatSessionsToDelete] = useState<ChatSession[] | null>(null);
+  const [deleteAllFilteredSessions, setDeleteAllFilteredSessions] = useState(false);
+  const [chatSessionDeleteBusy, setChatSessionDeleteBusy] = useState(false);
   const [chatSessionFrom, setChatSessionFrom] = useState(() => dateInputValue(new Date(Date.now() - 6 * 86_400_000)));
   const [chatSessionTo, setChatSessionTo] = useState(() => dateInputValue(new Date()));
   const [companyDraft, setCompanyDraft] = useState<Partial<Company> & Pick<Company, 'name'>>(emptyCompany);
@@ -166,11 +180,13 @@ export function App() {
   const input = useRef<HTMLInputElement>(null);
   const companyLogoInput = useRef<HTMLInputElement>(null);
   const selectAllInput = useRef<HTMLInputElement>(null);
+  const selectAllChatSessionsInput = useRef<HTMLInputElement>(null);
   const listRequest = useRef(0);
   const chatSessionRequest = useRef(0);
   const importInitializedFor = useRef('');
   const activeCompany = companies.find(company => company.id === activeCompanyId);
   const mapsLink = safeExternalUrl(companyDraft.maps_url);
+  const previewIsUrl = Boolean(preview && isUrlMime(preview.mime_type));
 
   const loadKnowledgeBases = useCallback(async (targetPage: number, query: string, companyId: string) => {
     if (!companyId) { setItems([]); setTotal(0); setTotalPages(0); setListLoading(false); return; }
@@ -203,7 +219,7 @@ export function App() {
     try {
       const result = await listChatSessions(companyId, dateFrom, dateTo, targetPage, chatSessionPageSize);
       if (requestId !== chatSessionRequest.current) return;
-      setChatSessions(result.items); setChatSessionTotal(result.total); setChatSessionTotalPages(result.total_pages);
+      setChatSessions(result.items); setChatSessionTotal(result.total); setChatSessionTotalPages(result.total_pages); setSelectedChatSessionIds(new Set());
     } catch (err) {
       if (requestId !== chatSessionRequest.current) return;
       setChatSessionError(err instanceof Error ? err.message : 'Could not load chat sessions');
@@ -222,6 +238,9 @@ export function App() {
     setImportExpanded(false);
     setChatSessionPage(1);
     setSelectedChatSession(null);
+    setSelectedChatSessionIds(new Set());
+    setChatSessionsToDelete(null);
+    setDeleteAllFilteredSessions(false);
   }, [activeCompanyId]);
   useEffect(() => {
     const timeout = window.setTimeout(() => loadKnowledgeBases(page, search, activeCompanyId), 250);
@@ -263,29 +282,53 @@ export function App() {
     return () => URL.revokeObjectURL(previewUrl);
   }, [companyLogo]);
   useEffect(() => {
-    if (!confirmation) return;
+    if (!confirmation && !chatSessionsToDelete && !deleteAllFilteredSessions) return;
     const closeOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape' && !rowBusy) setConfirmation(null);
+      if (event.key !== 'Escape') return;
+      if (!rowBusy) setConfirmation(null);
+      if (!chatSessionDeleteBusy) {
+        setChatSessionsToDelete(null);
+        setDeleteAllFilteredSessions(false);
+      }
     };
     document.addEventListener('keydown', closeOnEscape);
     return () => document.removeEventListener('keydown', closeOnEscape);
-  }, [confirmation, rowBusy]);
+  }, [chatSessionDeleteBusy, chatSessionsToDelete, confirmation, deleteAllFilteredSessions, rowBusy]);
   const selected = useMemo(() => preview ? (include ? rangeToPages(include, preview.total_pages) : Array.from({length: preview.total_pages}, (_, i) => i + 1)).filter(p => !rangeToPages(exclude, preview.total_pages).includes(p)) : [], [preview, include, exclude]);
   const selectedItems = useMemo(() => items.filter(item => selectedIds.has(item.id)), [items, selectedIds]);
   const selectedEnabledItems = useMemo(() => selectedItems.filter(item => item.status === 'enabled'), [selectedItems]);
   const selectedDisabledItems = useMemo(() => selectedItems.filter(item => item.status === 'disabled'), [selectedItems]);
   const allItemsSelected = items.length > 0 && items.every(item => selectedIds.has(item.id));
+  const selectedChatSessions = useMemo(() => chatSessions.filter(session => selectedChatSessionIds.has(session.id)), [chatSessions, selectedChatSessionIds]);
+  const allChatSessionsSelected = chatSessions.length > 0 && chatSessions.every(session => selectedChatSessionIds.has(session.id));
   useEffect(() => {
     if (selectAllInput.current) {
       selectAllInput.current.indeterminate = selectedItems.length > 0 && !allItemsSelected;
     }
   }, [allItemsSelected, selectedItems.length]);
+  useEffect(() => {
+    if (selectAllChatSessionsInput.current) {
+      selectAllChatSessionsInput.current.indeterminate = selectedChatSessions.length > 0 && !allChatSessionsSelected;
+    }
+  }, [allChatSessionsSelected, selectedChatSessions.length]);
 
   async function choose(chosen?: File) {
     if (!chosen) return; setError(''); setBusy(true); setFile(chosen);
     if (!activeCompanyId) { setError('Create or select a company before uploading a document'); setBusy(false); return; }
     try { const result = await previewPdf(chosen, activeCompanyId); setPreview(result); setName(chosen.name.replace(/\.pdf$/i, '')); setSuccess(null); }
     catch (err) { setError(err instanceof Error ? err.message : 'Could not read this file'); setFile(null); }
+    finally { setBusy(false); }
+  }
+
+  async function chooseUrl() {
+    const url = safeExternalUrl(sourceUrl);
+    if (!url) { setError('Enter a valid HTTP or HTTPS URL'); return; }
+    if (!activeCompanyId) { setError('Create or select a company before importing a URL'); return; }
+    setError(''); setBusy(true); setFile(null);
+    try {
+      const result = await previewUrl(url, activeCompanyId);
+      setPreview(result); setSourceUrl(result.source || url); setName((result.title || result.source).slice(0, 120)); setSuccess(null);
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not read this URL'); }
     finally { setBusy(false); }
   }
 
@@ -298,11 +341,18 @@ export function App() {
     finally { setBusy(false); }
   }
 
-  function reset(keepSuccess = false) {
+  function reset(keepSuccess = false, keepSourceType = false) {
     setPreview(null); setFile(null); setName(''); setStrategy('recursive'); setInclude(''); setExclude('');
+    setSourceUrl('');
+    if (!keepSourceType) setSourceType('pdf');
     setChunkSize(700); setOverlap(100); setParentSize(1600); setThreshold(.72); setError('');
     if (!keepSuccess) setSuccess(null);
     if (input.current) input.current.value = '';
+  }
+
+  function changeSourceType(next: KnowledgeSourceType) {
+    reset(false, true);
+    setSourceType(next);
   }
 
   function chooseCompanyLogo(chosen?: File) {
@@ -328,6 +378,9 @@ export function App() {
   function navigateFromMenu(target: 'knowledge' | 'sessions' | 'companies') {
     setConfirmation(null);
     setCompanyToDelete(null);
+    setChatSessionsToDelete(null);
+    setDeleteAllFilteredSessions(false);
+    setSelectedChatSessionIds(new Set());
     if (target === 'knowledge') {
       reset();
       setSearch('');
@@ -340,7 +393,7 @@ export function App() {
       const now = Date.now();
       setSelectedChatSession(null);
       setChatSessionPage(1);
-      setChatSessionPageSize(10);
+      setChatSessionPageSize(5);
       setChatSessionFrom(dateInputValue(new Date(now - 6 * 86_400_000)));
       setChatSessionTo(dateInputValue(new Date(now)));
       setChatSessionError('');
@@ -373,6 +426,65 @@ export function App() {
 
   function toggleAllItems() {
     setSelectedIds(allItemsSelected ? new Set() : new Set(items.map(item => item.id)));
+  }
+
+  function toggleChatSession(id: string) {
+    setSelectedChatSessionIds(current => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllChatSessions() {
+    setSelectedChatSessionIds(
+      allChatSessionsSelected ? new Set() : new Set(chatSessions.map(session => session.id))
+    );
+  }
+
+  async function confirmDeleteChatSessions() {
+    if (!chatSessionsToDelete?.length) return;
+    setChatSessionDeleteBusy(true); setChatSessionError('');
+    try {
+      const result = await deleteChatSessions(
+        activeCompanyId,
+        chatSessionsToDelete.map(session => session.id),
+      );
+      const targetPage = chatSessions.length - result.deleted === 0 && chatSessionPage > 1
+        ? chatSessionPage - 1
+        : chatSessionPage;
+      setChatSessionsToDelete(null);
+      setSelectedChatSessionIds(new Set());
+      if (targetPage !== chatSessionPage) setChatSessionPage(targetPage);
+      await loadChatSessionPage(
+        targetPage,
+        activeCompanyId,
+        chatSessionFrom,
+        chatSessionTo,
+      );
+    } catch (err) {
+      setChatSessionError(err instanceof Error ? err.message : 'Could not delete chat sessions');
+      setChatSessionsToDelete(null);
+    } finally {
+      setChatSessionDeleteBusy(false);
+    }
+  }
+
+  async function confirmDeleteAllFilteredSessions() {
+    if (!activeCompanyId || !chatSessionFrom || !chatSessionTo || chatSessionTotal === 0) return;
+    setChatSessionDeleteBusy(true); setChatSessionError('');
+    try {
+      await deleteFilteredChatSessions(activeCompanyId, chatSessionFrom, chatSessionTo);
+      setDeleteAllFilteredSessions(false);
+      setSelectedChatSessionIds(new Set());
+      setChatSessionPage(1);
+      await loadChatSessionPage(1, activeCompanyId, chatSessionFrom, chatSessionTo);
+    } catch (err) {
+      setChatSessionError(err instanceof Error ? err.message : 'Could not delete filtered chat sessions');
+      setDeleteAllFilteredSessions(false);
+    } finally {
+      setChatSessionDeleteBusy(false);
+    }
   }
 
   async function reviewChatSession(session: ChatSession) {
@@ -509,27 +621,28 @@ export function App() {
       </section> : companies.length > 0 ? <section className="company-context-bar empty"><div className="company-context-identity"><div className="company-context-logo"><Building2 size={24}/></div><div><p className="eyebrow">CHOOSE A WORKSPACE</p><b>Select a company</b><span>Knowledge bases are shown only after you choose their company.</span></div></div><div className="company-context-controls"><label>Company<select value="" onChange={event => { setActiveCompanyId(event.target.value); setPage(1); reset(); }} aria-label="Select company"><option value="" disabled>Choose company…</option>{companies.map(company => <option key={company.id} value={company.id}>{company.name}</option>)}</select></label><button onClick={() => setView('companies')}><Settings2 size={16}/>Manage companies</button></div></section> : <section className="company-context-bar empty"><div className="company-context-identity"><div className="company-context-logo"><Building2 size={24}/></div><div><p className="eyebrow">COMPANY REQUIRED</p><b>Create your first company</b><span>Knowledge bases and chatbot context belong to a company.</span></div></div><button onClick={() => setView('companies')}><Building2 size={16}/>Create company</button></section>}
       <section className={`workspace ${importExpanded ? '' : 'collapsed'}`}>
         <div className="workspace-heading">
-          <div><p className="eyebrow">IMPORT</p><h2>Add a knowledge base</h2><span>{preview ? file?.name : 'Upload and configure a PDF source'}</span></div>
+          <div><p className="eyebrow">IMPORT</p><h2>Add a knowledge base</h2><span>{preview ? preview.source : 'Import a PDF or public web page'}</span></div>
           <button className="workspace-toggle" onClick={toggleImportWorkspace} aria-expanded={importExpanded} aria-controls="import-workspace">
             {importExpanded ? 'Collapse' : 'Expand'} {importExpanded ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
           </button>
         </div>
         {success && <div className="import-success"><Check size={18}/><span><b>{success.name} was imported</b><small>{success.chunk_count} searchable chunks created. The form is ready for another document.</small></span><button onClick={() => setSuccess(null)} aria-label="Dismiss"><X size={15}/></button></div>}
         {importExpanded && <div id="import-workspace">
-        <div className="stepper"><span className="current"><i>1</i>Upload</span><b/><span className={preview ? 'current' : ''}><i>2</i>Configure</span><b/><span className={success ? 'current' : ''}><i>3</i>Import</span></div>
-        {!preview ? <div className={`dropzone ${dragging ? 'dragging' : ''}`} onDragOver={e => {e.preventDefault(); setDragging(true)}} onDragLeave={() => setDragging(false)} onDrop={e => {e.preventDefault(); setDragging(false); choose(e.dataTransfer.files[0])}}>
+        <div className="stepper"><span className="current"><i>1</i>Select source</span><b/><span className={preview ? 'current' : ''}><i>2</i>Configure</span><b/><span className={success ? 'current' : ''}><i>3</i>Import</span></div>
+        {!preview ? <><div className="source-type-switch" role="tablist" aria-label="Knowledge source type"><button role="tab" aria-selected={sourceType === 'pdf'} className={sourceType === 'pdf' ? 'selected' : ''} onClick={() => changeSourceType('pdf')}><FileText size={17}/>PDF document</button><button role="tab" aria-selected={sourceType === 'url'} className={sourceType === 'url' ? 'selected' : ''} onClick={() => changeSourceType('url')}><Globe2 size={17}/>Web page URL</button></div>{sourceType === 'pdf' ? <div className={`dropzone ${dragging ? 'dragging' : ''}`} onDragOver={e => {e.preventDefault(); setDragging(true)}} onDragLeave={() => setDragging(false)} onDrop={e => {e.preventDefault(); setDragging(false); choose(e.dataTransfer.files[0])}}>
           <div className="upload-icon"><UploadCloud size={30}/></div><h2>{busy ? 'Reading your document…' : 'Bring in a PDF'}</h2><p>Drag and drop it here, or choose a file from your device.</p><button className="primary" disabled={busy} onClick={() => input.current?.click()}>Choose PDF <ArrowRight size={17}/></button><input ref={input} hidden type="file" accept="application/pdf" onChange={e => choose(e.target.files?.[0])}/>{error && <div className="upload-error" role="alert"><AlertTriangle size={16}/><span>{error}</span></div>}<small>PDF up to 40 MB · Text-based documents work best</small>
-        </div> : <div className="configure-grid">
+        </div> : <div className="url-source-card"><div className="upload-icon"><Globe2 size={30}/></div><h2>{busy ? 'Reading the web page…' : 'Import a public web page'}</h2><p>Enter one HTTP or HTTPS URL. Navigation, scripts, and page chrome will be excluded.</p><label>Web page URL<div className="url-input"><Link2 size={17}/><input type="url" value={sourceUrl} onChange={event => setSourceUrl(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void chooseUrl(); } }} placeholder="https://example.com/help/article"/></div></label><button className="primary" disabled={busy || !sourceUrl.trim()} onClick={() => void chooseUrl()}>{busy ? 'Fetching page…' : 'Preview URL'} {!busy && <ArrowRight size={17}/>}</button>{error && <div className="upload-error" role="alert"><AlertTriangle size={16}/><span>{error}</span></div>}<small>Public, server-rendered HTML pages up to the configured fetch limit</small></div>}</> : <div className="configure-grid">
           <div className="preview-card card">
-            <div className="card-title"><div><p className="eyebrow">DOCUMENT</p><h2>Page preview</h2></div><button className="icon-button" onClick={() => reset()}><X size={17}/></button></div>
-            <div className="file-chip"><div className="pdf-icon"><FileText size={20}/></div><div><b>{file?.name}</b><small>{preview.total_pages} pages · {file ? (file.size / 1048576).toFixed(1) : 0} MB</small></div><Check className="check" size={18}/></div>
-            <div className="pages">{preview.pages.map(page => { const included = selected.includes(page.page_number); return <article className={included ? 'included' : 'excluded'} key={page.page_number}><span>{page.page_number}</span><div><b>Page {page.page_number}</b><small>{included ? 'Included' : 'Excluded'}</small><p>{page.excerpt || 'No extractable text on this page.'}</p></div></article>; })}</div>
+            <div className="card-title"><div><p className="eyebrow">{previewIsUrl ? 'WEB PAGE' : 'DOCUMENT'}</p><h2>{previewIsUrl ? 'Content preview' : 'Page preview'}</h2></div><button className="icon-button" onClick={() => reset(false, true)}><X size={17}/></button></div>
+            <div className="file-chip"><div className={previewIsUrl ? 'url-icon' : 'pdf-icon'}>{previewIsUrl ? <Globe2 size={20}/> : <FileText size={20}/>}</div><div><b>{preview.title || preview.source}</b><small>{previewIsUrl ? preview.source : `${preview.total_pages} pages · ${file ? (file.size / 1048576).toFixed(1) : 0} MB`}</small></div><Check className="check" size={18}/></div>
+            {previewIsUrl ? <div className="web-preview"><b>Extracted page content</b><p>{preview.pages[0]?.excerpt || 'No extractable text was found.'}</p><small>The final chunks preserve detected heading and section structure.</small></div> : <div className="pages">{preview.pages.map(page => { const included = selected.includes(page.page_number); return <article className={included ? 'included' : 'excluded'} key={page.page_number}><span>{page.page_number}</span><div><b>Page {page.page_number}</b><small>{included ? 'Included' : 'Excluded'}</small><p>{page.excerpt || 'No extractable text on this page.'}</p></div></article>; })}</div>}
           </div>
           <div className="settings-card card">
             <div className="card-title"><div><p className="eyebrow">CONFIGURATION</p><h2>Shape your knowledge</h2></div><Settings2 size={20}/></div>
             <label>Knowledge base name<input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Product handbook"/></label>
-            <div className="two-col"><label>Include only <input value={include} disabled={Boolean(exclude.trim())} onChange={e => setInclude(e.target.value)} placeholder={exclude ? 'Using exclusions' : 'All pages'}/><small>e.g. 1-4, 8, 12-15</small></label><label>Exclude pages <input value={exclude} disabled={Boolean(include.trim())} onChange={e => setExclude(e.target.value)} placeholder={include ? 'Using inclusions' : 'None'}/><small>{selected.length} of {preview.total_pages} selected</small></label></div>
-            <label>Chunking strategy</label><div className="strategy-grid">{strategies.map(item => <button key={item.id} onClick={() => setStrategy(item.id)} className={strategy === item.id ? 'selected' : ''}><span>{item.name}</span><small>{item.caption}</small>{strategy === item.id && <Check size={15}/>}</button>)}</div>
+            {!previewIsUrl && <div className="two-col"><label>Include only <input value={include} disabled={Boolean(exclude.trim())} onChange={e => setInclude(e.target.value)} placeholder={exclude ? 'Using exclusions' : 'All pages'}/><small>e.g. 1-4, 8, 12-15</small></label><label>Exclude pages <input value={exclude} disabled={Boolean(include.trim())} onChange={e => setExclude(e.target.value)} placeholder={include ? 'Using inclusions' : 'None'}/><small>{selected.length} of {preview.total_pages} selected</small></label></div>}
+            {preview.replaces_knowledge_base_id && <div className="url-refresh-note"><RefreshCw size={15}/><span>This URL has changed. Importing will replace its previous indexed content.</span></div>}
+            <label>Chunking strategy</label><div className="strategy-grid">{strategies.map(item => { const unavailable = previewIsUrl && !supportsUrlImport(item.id); return <button key={item.id} disabled={unavailable} title={unavailable ? `${item.name} is available only for PDF imports` : undefined} onClick={() => setStrategy(item.id)} className={strategy === item.id ? 'selected' : ''}><span>{item.name}</span><small>{unavailable ? 'PDF sources only' : item.caption}</small>{strategy === item.id && <Check size={15}/>}</button>; })}</div>
             <div className="parameter-box"><div className="two-col"><label>Chunk size <div className="unit-input"><input type="number" value={chunkSize} min="100" max="4000" onChange={e => setChunkSize(+e.target.value)}/><span>chars</span></div></label><label>Overlap <div className="unit-input"><input type="number" value={overlap} min="0" max="1000" onChange={e => setOverlap(+e.target.value)}/><span>chars</span></div></label></div>{strategy === 'semantic' && <label>Similarity threshold <input type="range" min="0" max="1" step=".01" value={threshold} onChange={e => setThreshold(+e.target.value)}/><small>{threshold.toFixed(2)}</small></label>}{strategy === 'hierarchical' && <label>Parent chunk size <div className="unit-input"><input type="number" value={parentSize} onChange={e => setParentSize(+e.target.value)}/><span>chars</span></div></label>}</div>
             {error && <div className="notice error">{error}</div>}
             <button className="primary import" disabled={busy || selected.length === 0 || !name.trim()} onClick={ingest}>{busy ? 'Building index…' : 'Import knowledge base'} {!busy && <ArrowRight size={17}/>}</button>
@@ -547,13 +660,13 @@ export function App() {
         {selectedItems.length > 0 && <div className="bulk-toolbar" role="toolbar" aria-label="Selected knowledge-base actions"><span><b>{selectedItems.length}</b> selected</span><div><button disabled={selectedDisabledItems.length === 0 || Boolean(rowBusy)} onClick={enableSelectedKnowledgeBases}><CirclePlay size={15}/>Enable</button><button disabled={selectedEnabledItems.length === 0 || Boolean(rowBusy)} onClick={() => setConfirmation({type: 'disable', items: selectedEnabledItems})}><CirclePause size={15}/>Disable</button><button className="bulk-delete" disabled={Boolean(rowBusy)} onClick={() => setConfirmation({type: 'delete', items: selectedItems})}><Trash2 size={14}/>Delete</button><button className="clear-selection" disabled={Boolean(rowBusy)} onClick={() => setSelectedIds(new Set())}>Clear</button></div></div>}
         <div className="kb-list" aria-busy={listLoading}>
           <div className="kb-table-head"><label className="kb-select"><input ref={selectAllInput} type="checkbox" checked={allItemsSelected} onChange={toggleAllItems} disabled={items.length === 0 || listLoading} aria-label="Select all knowledge bases on this page"/><span/></label><span/><span>Knowledge base</span><span>Created</span><span>Strategy</span><span>Pages</span><span>Chunks</span><span>Status</span></div>
-          {listLoading ? <div className="library-empty">Loading knowledge bases…</div> : items.length === 0 ? <div className="library-empty"><Library size={22}/><b>{!activeCompany ? 'Select a company' : search ? 'No matching knowledge bases' : 'No knowledge bases yet'}</b><span>{!activeCompany ? 'Choose a company above to view its knowledge bases.' : search ? 'Try a different name or filename.' : 'Import a PDF to create your first source.'}</span></div> : items.map(item => <div className={`kb-row ${item.status === 'disabled' ? 'disabled' : ''} ${selectedIds.has(item.id) ? 'selected' : ''}`} key={item.id}>
+          {listLoading ? <div className="library-empty">Loading knowledge bases…</div> : items.length === 0 ? <div className="library-empty"><Library size={22}/><b>{!activeCompany ? 'Select a company' : search ? 'No matching knowledge bases' : 'No knowledge bases yet'}</b><span>{!activeCompany ? 'Choose a company above to view its knowledge bases.' : search ? 'Try a different name or source.' : 'Import a PDF or web page to create your first source.'}</span></div> : items.map(item => <div className={`kb-row ${item.status === 'disabled' ? 'disabled' : ''} ${selectedIds.has(item.id) ? 'selected' : ''}`} key={item.id}>
             <label className="kb-select"><input type="checkbox" checked={selectedIds.has(item.id)} onChange={() => toggleSelected(item.id)} disabled={Boolean(rowBusy)} aria-label={`Select ${item.name}`}/><span/></label>
-            <div className={`kb-icon ${item.mime_type === 'application/pdf' ? 'pdf' : ''}`} title={item.mime_type} aria-label={item.mime_type === 'application/pdf' ? 'PDF document' : 'Document'}><FileText size={19}/>{item.mime_type === 'application/pdf' && <small>PDF</small>}</div>
-            <div className="kb-main"><b>{item.name}</b><span>{item.filename}</span></div>
+            <div className={`kb-icon ${isUrlMime(item.mime_type) ? 'url' : 'pdf'}`} title={item.mime_type} aria-label={isUrlMime(item.mime_type) ? 'Web page' : 'PDF document'}>{isUrlMime(item.mime_type) ? <Globe2 size={19}/> : <FileText size={19}/>}<small>{isUrlMime(item.mime_type) ? 'URL' : 'PDF'}</small></div>
+            <div className="kb-main"><b>{item.name}</b><span title={item.source}>{item.source}</span></div>
             <time className="created-at" dateTime={item.created_at}>{formatCreatedAt(item.created_at)}</time>
             <div className="kb-detail"><b>{strategyNames[item.chunking.strategy]}</b><span>{item.chunking.chunk_size} chars</span></div>
-            <span>{item.selected_pages}</span>
+            <span>{isUrlMime(item.mime_type) ? '—' : item.selected_pages}</span>
             <span>{item.chunk_count}</span>
             <span className={`status ${item.status}`}><i/>{item.status === 'enabled' ? 'Enabled' : 'Disabled'}</span>
           </div>)}
@@ -569,9 +682,10 @@ export function App() {
         <div className="session-review-header"><button className="session-back" onClick={returnToChatSessions}><ArrowLeft size={16}/>Back to sessions</button><div><span className={`session-status ${selectedChatSession.session.status}`}>{selectedChatSession.session.status}</span><b>{formatCreatedAt(selectedChatSession.session.created_at)}</b><small>{selectedChatSession.session.ip_address || 'IP unavailable'} · {selectedChatSession.session.message_count} messages</small></div></div>
         <div className="session-transcript" aria-label="Read-only chat transcript">{selectedChatSession.messages.map(message => <article className={`session-message ${message.owner}`} key={message.id}>{message.owner === 'bot' && <div className={`session-message-avatar avatar-${activeCompany?.bot_avatar || 'bot'}`}>{activeCompany ? avatarIcon(activeCompany.bot_avatar, 15) : <Bot size={15}/>}</div>}<div className="session-message-body"><div className="session-message-meta"><b>{message.owner === 'bot' ? activeCompany?.bot_alias || 'Bot' : 'User'}</b><time dateTime={message.created_at}>{formatClock(message.created_at)}</time></div><p>{message.content}</p></div>{message.owner === 'user' && <div className="session-message-avatar user"><UserRound size={15}/></div>}</article>)}</div>
       </section> : <section className="session-library card">
-        <div className="session-library-heading"><div><p className="eyebrow">CONVERSATIONS</p><h2>Chat sessions</h2><span>{chatSessionTotal} {chatSessionTotal === 1 ? 'session' : 'sessions'} · newest first</span></div><div className="session-date-filter"><label><span><CalendarDays size={14}/>From</span><input required type="date" value={chatSessionFrom} min={shiftDateInput(chatSessionTo, -(MAX_CHAT_SESSION_DATE_RANGE_DAYS - 1))} max={chatSessionTo} onChange={event => { const value = event.target.value; setChatSessionFrom(value); if (value && chatSessionTo > shiftDateInput(value, MAX_CHAT_SESSION_DATE_RANGE_DAYS - 1)) setChatSessionTo(shiftDateInput(value, MAX_CHAT_SESSION_DATE_RANGE_DAYS - 1)); setChatSessionPage(1); }}/></label><label><span>To</span><input required type="date" value={chatSessionTo} min={chatSessionFrom} max={shiftDateInput(chatSessionFrom, MAX_CHAT_SESSION_DATE_RANGE_DAYS - 1)} onChange={event => { const value = event.target.value; setChatSessionTo(value); if (value && chatSessionFrom < shiftDateInput(value, -(MAX_CHAT_SESSION_DATE_RANGE_DAYS - 1))) setChatSessionFrom(shiftDateInput(value, -(MAX_CHAT_SESSION_DATE_RANGE_DAYS - 1))); setChatSessionPage(1); }}/></label><label className="session-page-size"><span>Rows</span><select value={chatSessionPageSize} onChange={event => { setChatSessionPageSize(Number(event.target.value)); setChatSessionPage(1); }} aria-label="Chat sessions per page">{CHAT_SESSION_PAGE_SIZES.map(size => <option key={size} value={size}>{size}</option>)}</select></label><button className={`session-refresh ${chatSessionsLoading ? 'loading' : ''}`} disabled={chatSessionsLoading || !activeCompanyId || !chatSessionFrom || !chatSessionTo} onClick={() => void loadChatSessionPage(chatSessionPage, activeCompanyId, chatSessionFrom, chatSessionTo)} aria-label="Refresh chat sessions" title="Refresh chat sessions"><RefreshCw size={16}/></button></div></div>
+        <div className="session-library-heading"><div><p className="eyebrow">CONVERSATIONS</p><h2>Chat sessions</h2><span>{chatSessionTotal} {chatSessionTotal === 1 ? 'session' : 'sessions'} · newest first</span></div><div className="session-date-filter"><label><span><CalendarDays size={14}/>From</span><input required type="date" value={chatSessionFrom} min={shiftDateInput(chatSessionTo, -(MAX_CHAT_SESSION_DATE_RANGE_DAYS - 1))} max={chatSessionTo} onChange={event => { const value = event.target.value; setChatSessionFrom(value); if (value && chatSessionTo > shiftDateInput(value, MAX_CHAT_SESSION_DATE_RANGE_DAYS - 1)) setChatSessionTo(shiftDateInput(value, MAX_CHAT_SESSION_DATE_RANGE_DAYS - 1)); setChatSessionPage(1); }}/></label><label><span>To</span><input required type="date" value={chatSessionTo} min={chatSessionFrom} max={shiftDateInput(chatSessionFrom, MAX_CHAT_SESSION_DATE_RANGE_DAYS - 1)} onChange={event => { const value = event.target.value; setChatSessionTo(value); if (value && chatSessionFrom < shiftDateInput(value, -(MAX_CHAT_SESSION_DATE_RANGE_DAYS - 1))) setChatSessionFrom(shiftDateInput(value, -(MAX_CHAT_SESSION_DATE_RANGE_DAYS - 1))); setChatSessionPage(1); }}/></label><label className="session-page-size"><span>Rows</span><select value={chatSessionPageSize} onChange={event => { setChatSessionPageSize(Number(event.target.value)); setChatSessionPage(1); }} aria-label="Chat sessions per page">{CHAT_SESSION_PAGE_SIZES.map(size => <option key={size} value={size}>{size}</option>)}</select></label><button className={`session-refresh ${chatSessionsLoading ? 'loading' : ''}`} disabled={chatSessionsLoading || !activeCompanyId || !chatSessionFrom || !chatSessionTo} onClick={() => void loadChatSessionPage(chatSessionPage, activeCompanyId, chatSessionFrom, chatSessionTo)} aria-label="Refresh chat sessions" title="Refresh chat sessions"><RefreshCw size={16}/></button><button className="session-filter-delete" disabled={chatSessionsLoading || chatSessionTotal === 0 || chatSessionDeleteBusy || !activeCompanyId || !chatSessionFrom || !chatSessionTo} onClick={() => setDeleteAllFilteredSessions(true)} title={chatSessionTotal ? `Delete all ${chatSessionTotal} sessions in this period` : 'No sessions to delete in this period'}><Trash2 size={15}/>Delete all</button></div></div>
         {chatSessionError && <div className="notice error">{chatSessionError}</div>}
-        <div className="session-table" aria-busy={chatSessionsLoading}><div className="session-table-head"><span>Started</span><span>Status</span><span>Messages</span><span>Duration</span><span>IP address</span><span/></div>{chatSessionsLoading ? <div className="session-empty">Loading chat sessions…</div> : chatSessions.length === 0 ? <div className="session-empty"><MessageSquareText size={24}/><b>{activeCompany ? 'No sessions in this date range' : 'Select a company'}</b><span>{activeCompany ? 'Try another date range or launch the chatbot to begin a conversation.' : 'Choose a company above to review its conversations.'}</span></div> : chatSessions.map(session => <div className="session-row" key={session.id}><time dateTime={session.created_at}>{formatCreatedAt(session.created_at)}</time><span className={`session-status ${session.status}`}>{session.status}</span><span>{session.message_count}</span><span title={session.ended_at ? `Ended ${formatCreatedAt(session.ended_at)}` : undefined}>{formatSessionDuration(session.created_at, session.ended_at)}</span><span>{session.ip_address || 'Unavailable'}</span><button onClick={() => reviewChatSession(session)} aria-label={`View chat session from ${formatCreatedAt(session.created_at)}`}><Eye size={15}/>View chat</button></div>)}</div>
+        {selectedChatSessions.length > 0 && <div className="bulk-toolbar session-bulk-toolbar" role="toolbar" aria-label="Selected chat-session actions"><span><b>{selectedChatSessions.length}</b> selected</span><div><button className="bulk-delete" disabled={chatSessionDeleteBusy} onClick={() => setChatSessionsToDelete(selectedChatSessions)}><Trash2 size={14}/>Delete</button><button className="clear-selection" disabled={chatSessionDeleteBusy} onClick={() => setSelectedChatSessionIds(new Set())}>Clear</button></div></div>}
+        <div className="session-table" aria-busy={chatSessionsLoading}><div className="session-table-head"><label className="kb-select"><input ref={selectAllChatSessionsInput} type="checkbox" checked={allChatSessionsSelected} onChange={toggleAllChatSessions} disabled={chatSessions.length === 0 || chatSessionsLoading || chatSessionDeleteBusy} aria-label="Select all chat sessions on this page"/><span/></label><span>Started</span><span>Status</span><span>Messages</span><span>Duration</span><span>IP address</span><span/></div>{chatSessionsLoading ? <div className="session-empty">Loading chat sessions…</div> : chatSessions.length === 0 ? <div className="session-empty"><MessageSquareText size={24}/><b>{activeCompany ? 'No sessions in this date range' : 'Select a company'}</b><span>{activeCompany ? 'Try another date range or launch the chatbot to begin a conversation.' : 'Choose a company above to review its conversations.'}</span></div> : chatSessions.map(session => <div className={`session-row ${selectedChatSessionIds.has(session.id) ? 'selected' : ''}`} key={session.id}><label className="kb-select"><input type="checkbox" checked={selectedChatSessionIds.has(session.id)} onChange={() => toggleChatSession(session.id)} disabled={chatSessionDeleteBusy} aria-label={`Select chat session from ${formatCreatedAt(session.created_at)}`}/><span/></label><time dateTime={session.created_at}>{formatCreatedAt(session.created_at)}</time><span className={`session-status ${session.status}`}>{session.status}</span><span>{session.message_count}</span><span title={session.ended_at ? `Ended ${formatCreatedAt(session.ended_at)}` : undefined}>{formatSessionDuration(session.created_at, session.ended_at)}</span><span>{session.ip_address || 'Unavailable'}</span><button disabled={chatSessionDeleteBusy} onClick={() => reviewChatSession(session)} aria-label={`View chat session from ${formatCreatedAt(session.created_at)}`}><Eye size={15}/>View chat</button></div>)}</div>
         {chatSessionTotalPages > 1 && <div className="pagination" role="navigation" aria-label="Chat-session pages"><span>Page {chatSessionPage} of {chatSessionTotalPages}</span><div><button disabled={chatSessionPage === 1 || chatSessionsLoading} onClick={() => setChatSessionPage(current => current - 1)}><ArrowLeft size={15}/>Previous</button><button disabled={chatSessionPage >= chatSessionTotalPages || chatSessionsLoading} onClick={() => setChatSessionPage(current => current + 1)}>Next<ArrowRight size={15}/></button></div></div>}
       </section>}
       </> : <section className="company-workspace">
@@ -590,7 +704,9 @@ export function App() {
         <div className="company-list"><div className="section-heading"><div><p className="eyebrow">COMPANIES</p><h2>{companies.length} configured</h2></div></div>{companies.length === 0 ? <div className="company-empty"><Building2 size={25}/><b>No companies yet</b><span>Create one to begin importing knowledge.</span></div> : companies.map(company => <article className="company-card" key={company.id}><div className="company-logo">{company.has_logo ? <img src={companyLogoUrl(company.id)} alt=""/> : <Building2 size={22}/>}</div><div className="company-card-main"><div><b>{company.name}</b><span>{company.about || 'No company description yet.'}</span></div><div className="company-meta"><span>{avatarIcon(company.bot_avatar, 14)} {company.bot_alias}</span>{company.email && <span><Mail size={13}/>{company.email}</span>}{company.phone && <span><Phone size={13}/>{company.phone}</span>}</div></div><div className="company-actions"><button onClick={() => editCompany(company)} aria-label={`Edit ${company.name}`}><Pencil size={15}/></button><button className="delete" onClick={() => setCompanyToDelete(company)} aria-label={`Delete ${company.name}`}><Trash2 size={15}/></button></div></article>)}</div>
       </section>}
     </main>
-    {confirmation && <div className="confirmation-backdrop" onMouseDown={() => !rowBusy && setConfirmation(null)}><section className={`confirmation-dialog ${confirmation.type}`} role="dialog" aria-modal="true" aria-labelledby="confirmation-title" onMouseDown={event => event.stopPropagation()}><div className="confirmation-icon">{confirmation.type === 'delete' ? <AlertTriangle size={22}/> : <CirclePause size={22}/>}</div><div className="confirmation-copy"><p className="eyebrow">{confirmation.type === 'delete' ? 'PERMANENT ACTION' : 'CHANGE AVAILABILITY'}</p><h2 id="confirmation-title">{confirmation.type === 'delete' ? `Delete ${confirmation.items.length === 1 ? 'knowledge base' : `${confirmation.items.length} knowledge bases`}?` : `Disable ${confirmation.items.length === 1 ? 'knowledge base' : `${confirmation.items.length} knowledge bases`}?`}</h2><p>{confirmation.type === 'delete' ? 'This permanently removes the selected knowledge-base records and all associated vector chunks. This action cannot be undone.' : 'The selected sources will disappear from the chatbot and will not be used for retrieval. You can enable them again at any time.'}</p><div className="confirmation-target"><FileText size={17}/><span><b>{confirmation.items.length === 1 ? confirmation.items[0].name : `${confirmation.items.length} knowledge bases selected`}</b><small>{confirmation.items.length === 1 ? `${confirmation.items[0].chunk_count} chunks · ${confirmation.items[0].selected_pages} pages` : confirmation.items.map(item => item.name).join(', ')}</small></span></div></div><div className="confirmation-actions"><button className="cancel" autoFocus disabled={Boolean(rowBusy)} onClick={() => setConfirmation(null)}>Keep {confirmation.items.length === 1 ? 'knowledge base' : 'knowledge bases'}</button><button className={confirmation.type === 'delete' ? 'confirm-delete' : 'confirm-disable'} disabled={Boolean(rowBusy)} onClick={confirmKnowledgeBaseAction}>{rowBusy ? 'Working…' : confirmation.type === 'delete' ? `Delete ${confirmation.items.length === 1 ? 'permanently' : 'selected'}` : `Disable ${confirmation.items.length === 1 ? 'knowledge base' : 'selected'}`}</button></div></section></div>}
+    {confirmation && <div className="confirmation-backdrop" onMouseDown={() => !rowBusy && setConfirmation(null)}><section className={`confirmation-dialog ${confirmation.type}`} role="dialog" aria-modal="true" aria-labelledby="confirmation-title" onMouseDown={event => event.stopPropagation()}><div className="confirmation-icon">{confirmation.type === 'delete' ? <AlertTriangle size={22}/> : <CirclePause size={22}/>}</div><div className="confirmation-copy"><p className="eyebrow">{confirmation.type === 'delete' ? 'PERMANENT ACTION' : 'CHANGE AVAILABILITY'}</p><h2 id="confirmation-title">{confirmation.type === 'delete' ? `Delete ${confirmation.items.length === 1 ? 'knowledge base' : `${confirmation.items.length} knowledge bases`}?` : `Disable ${confirmation.items.length === 1 ? 'knowledge base' : `${confirmation.items.length} knowledge bases`}?`}</h2><p>{confirmation.type === 'delete' ? 'This permanently removes the selected knowledge-base records and all associated vector chunks. This action cannot be undone.' : 'The selected sources will disappear from the chatbot and will not be used for retrieval. You can enable them again at any time.'}</p><div className="confirmation-target">{confirmation.items.length === 1 && isUrlMime(confirmation.items[0].mime_type) ? <Globe2 size={17}/> : <FileText size={17}/>}<span><b>{confirmation.items.length === 1 ? confirmation.items[0].name : `${confirmation.items.length} knowledge bases selected`}</b><small>{confirmation.items.length === 1 ? `${confirmation.items[0].chunk_count} chunks · ${isUrlMime(confirmation.items[0].mime_type) ? 'web page' : `${confirmation.items[0].selected_pages} pages`}` : confirmation.items.map(item => item.name).join(', ')}</small></span></div></div><div className="confirmation-actions"><button className="cancel" autoFocus disabled={Boolean(rowBusy)} onClick={() => setConfirmation(null)}>Keep {confirmation.items.length === 1 ? 'knowledge base' : 'knowledge bases'}</button><button className={confirmation.type === 'delete' ? 'confirm-delete' : 'confirm-disable'} disabled={Boolean(rowBusy)} onClick={confirmKnowledgeBaseAction}>{rowBusy ? 'Working…' : confirmation.type === 'delete' ? `Delete ${confirmation.items.length === 1 ? 'permanently' : 'selected'}` : `Disable ${confirmation.items.length === 1 ? 'knowledge base' : 'selected'}`}</button></div></section></div>}
+    {chatSessionsToDelete && <div className="confirmation-backdrop" onMouseDown={() => !chatSessionDeleteBusy && setChatSessionsToDelete(null)}><section className="confirmation-dialog delete" role="dialog" aria-modal="true" aria-labelledby="session-delete-title" onMouseDown={event => event.stopPropagation()}><div className="confirmation-icon"><AlertTriangle size={22}/></div><div className="confirmation-copy"><p className="eyebrow">PERMANENT ACTION</p><h2 id="session-delete-title">Delete {chatSessionsToDelete.length === 1 ? 'chat session' : `${chatSessionsToDelete.length} chat sessions`}?</h2><p>This permanently removes the selected sessions and every message in their transcripts. This action cannot be undone.</p><div className="confirmation-target"><MessageSquareText size={17}/><span><b>{chatSessionsToDelete.length === 1 ? formatCreatedAt(chatSessionsToDelete[0].created_at) : `${chatSessionsToDelete.length} chat sessions selected`}</b><small>{chatSessionsToDelete.reduce((totalMessages, session) => totalMessages + session.message_count, 0)} stored messages</small></span></div></div><div className="confirmation-actions"><button className="cancel" autoFocus disabled={chatSessionDeleteBusy} onClick={() => setChatSessionsToDelete(null)}>Keep {chatSessionsToDelete.length === 1 ? 'session' : 'sessions'}</button><button className="confirm-delete" disabled={chatSessionDeleteBusy} onClick={confirmDeleteChatSessions}>{chatSessionDeleteBusy ? 'Deleting…' : 'Delete permanently'}</button></div></section></div>}
+    {deleteAllFilteredSessions && <div className="confirmation-backdrop" onMouseDown={() => !chatSessionDeleteBusy && setDeleteAllFilteredSessions(false)}><section className="confirmation-dialog delete" role="dialog" aria-modal="true" aria-labelledby="filtered-session-delete-title" onMouseDown={event => event.stopPropagation()}><div className="confirmation-icon"><AlertTriangle size={22}/></div><div className="confirmation-copy"><p className="eyebrow">DELETE FILTERED RESULTS</p><h2 id="filtered-session-delete-title">Delete all {chatSessionTotal} {chatSessionTotal === 1 ? 'session' : 'sessions'}?</h2><p>This permanently removes every session matching the selected company and date range, including results on other pages and all stored messages. This action cannot be undone.</p><div className="confirmation-target"><CalendarDays size={17}/><span><b>{chatSessionFrom} to {chatSessionTo}</b><small>{activeCompany?.name || 'Selected company'} · {chatSessionTotal} matching {chatSessionTotal === 1 ? 'session' : 'sessions'}</small></span></div></div><div className="confirmation-actions"><button className="cancel" autoFocus disabled={chatSessionDeleteBusy} onClick={() => setDeleteAllFilteredSessions(false)}>Keep sessions</button><button className="confirm-delete" disabled={chatSessionDeleteBusy} onClick={confirmDeleteAllFilteredSessions}>{chatSessionDeleteBusy ? 'Deleting…' : 'Delete all permanently'}</button></div></section></div>}
     {companyToDelete && <div className="confirmation-backdrop" onMouseDown={() => !companyBusy && setCompanyToDelete(null)}><section className="confirmation-dialog delete" role="dialog" aria-modal="true" aria-labelledby="company-delete-title" onMouseDown={event => event.stopPropagation()}><div className="confirmation-icon"><AlertTriangle size={22}/></div><div className="confirmation-copy"><p className="eyebrow">PERMANENT ACTION</p><h2 id="company-delete-title">Delete company?</h2><p>This permanently removes the company, every associated knowledge base, and all related Qdrant chunks.</p><div className="confirmation-target"><Building2 size={17}/><span><b>{companyToDelete.name}</b><small>This action cannot be undone.</small></span></div></div><div className="confirmation-actions"><button className="cancel" autoFocus disabled={companyBusy} onClick={() => setCompanyToDelete(null)}>Keep company</button><button className="confirm-delete" disabled={companyBusy} onClick={confirmDeleteCompany}>{companyBusy ? 'Deleting…' : 'Delete company'}</button></div></section></div>}
   </div>;
 }

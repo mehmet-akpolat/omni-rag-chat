@@ -6,7 +6,7 @@ from xml.etree import ElementTree
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from packages.omni_rag_core.ai import OllamaClient
 from packages.omni_rag_core.documents import DocumentStore, InvalidDocument
@@ -20,6 +20,7 @@ from packages.omni_rag_core.domain import (
     DocumentPreview,
     ImportRequest,
     KnowledgeBase,
+    PagePreview,
 )
 from packages.omni_rag_core.repository import (
     DuplicateCompanyName,
@@ -27,9 +28,15 @@ from packages.omni_rag_core.repository import (
     DuplicateKnowledgeBaseName,
     SqlKnowledgeRepository,
 )
-from packages.omni_rag_core.services import CompanyIndexingError, CompanyService, ImportService
+from packages.omni_rag_core.services import (
+    URL_CHUNKING_STRATEGIES,
+    CompanyIndexingError,
+    CompanyService,
+    ImportService,
+)
 from packages.omni_rag_core.settings import Settings, get_settings
 from packages.omni_rag_core.vector_store import QdrantVectorStore, ResilientVectorStore
+from packages.omni_rag_core.web_documents import WebDocumentFetcher
 
 MAX_UPLOAD_BYTES = 40 * 1024 * 1024
 MAX_LOGO_BYTES = 512 * 1024
@@ -69,6 +76,11 @@ class KnowledgeBaseState(BaseModel):
     enabled: bool
 
 
+class UrlPreviewRequest(BaseModel):
+    company_id: str
+    url: str = Field(min_length=8, max_length=2048)
+
+
 class KnowledgeBasePage(BaseModel):
     items: list[KnowledgeBase]
     page: int
@@ -90,6 +102,21 @@ class ChatSessionDetail(BaseModel):
     messages: list[ChatSessionMessage]
 
 
+class ChatSessionDeleteRequest(BaseModel):
+    company_id: str
+    session_ids: list[str] | None = Field(default=None, min_length=1, max_length=100)
+    date_from: date | None = None
+    date_to: date | None = None
+
+
+class ChatSessionDeleteResult(BaseModel):
+    deleted: int
+
+
+def is_url_mime(mime_type: str) -> bool:
+    return mime_type in {"text/html", "application/xhtml+xml"}
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     config = settings or get_settings()
 
@@ -103,6 +130,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.vectors = vectors
         app.state.importer = ImportService(documents, repository, vectors, OllamaClient(config))
         app.state.companies = CompanyService(repository, vectors, OllamaClient(config))
+        app.state.web_documents = WebDocumentFetcher(
+            timeout=config.web_fetch_timeout,
+            max_bytes=config.web_fetch_max_bytes,
+            max_redirects=config.web_fetch_max_redirects,
+        )
         app.state.uploads = {}
         try:
             yield
@@ -112,7 +144,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="Omni RAG Admin API",
         version="1.0.0",
-        description="PDF preview, configuration, and knowledge-base ingestion.",
+        description="PDF and URL preview, configuration, and knowledge-base ingestion.",
         lifespan=lifespan,
     )
     app.add_middleware(
@@ -143,7 +175,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {
                 "id": ChunkingStrategy.SEMANTIC,
                 "name": "Semantic",
-                "description": "Groups related paragraphs into coherent passages.",
+                "description": "Keeps neighboring paragraphs together in coherent passages.",
             },
             {
                 "id": ChunkingStrategy.HIERARCHICAL,
@@ -182,34 +214,97 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             path.unlink(missing_ok=True)
             raise HTTPException(422, str(exc)) from exc
         request.app.state.uploads[document_id] = {
-            "filename": file.filename,
+            "source": file.filename,
+            "mime_type": "application/pdf",
             "checksum": checksum,
             "company_id": company_id,
         }
         return request.app.state.documents.preview(document_id, file.filename, pages)
+
+    @app.post("/api/v1/urls/preview", response_model=DocumentPreview)
+    async def preview_url(payload: UrlPreviewRequest, request: Request) -> DocumentPreview:
+        repository = request.app.state.repository
+        if not repository.get_company(payload.company_id):
+            raise HTTPException(404, "Company not found")
+        try:
+            page = await request.app.state.web_documents.fetch(payload.url)
+        except InvalidDocument as exc:
+            raise HTTPException(422, str(exc)) from exc
+        checksum = hashlib.sha256(page.text.encode("utf-8")).hexdigest()
+        duplicate = repository.get_by_checksum(checksum, payload.company_id)
+        if duplicate:
+            raise HTTPException(
+                409,
+                f'This URL content is already imported as "{duplicate.name}"',
+            )
+        existing = repository.get_by_url_source(page.url, payload.company_id)
+        document_id = str(uuid4())
+        request.app.state.uploads[document_id] = {
+            "source": page.url,
+            "title": page.title,
+            "mime_type": "text/html",
+            "checksum": checksum,
+            "company_id": payload.company_id,
+            "text": page.text,
+            "replaces_knowledge_base_id": existing.id if existing else None,
+        }
+        return DocumentPreview(
+            document_id=document_id,
+            source=page.url,
+            mime_type="text/html",
+            total_pages=1,
+            pages=[PagePreview(page_number=1, excerpt=" ".join(page.text.split())[:420])],
+            title=page.title,
+            replaces_knowledge_base_id=existing.id if existing else None,
+        )
 
     @app.post("/api/v1/knowledge-bases", response_model=KnowledgeBase, status_code=201)
     async def create_knowledge_base(payload: ImportRequest, request: Request) -> KnowledgeBase:
         upload = request.app.state.uploads.get(payload.document_id)
         if not upload:
             raise HTTPException(404, "Uploaded document not found; upload it again")
-        filename = upload["filename"]
+        source = upload["source"]
         checksum = upload["checksum"]
+        source_is_url = is_url_mime(upload["mime_type"])
+        replacement_id = upload.get("replaces_knowledge_base_id")
+        if (
+            source_is_url
+            and payload.chunking.strategy not in URL_CHUNKING_STRATEGIES
+        ):
+            raise HTTPException(
+                422,
+                "URL knowledge bases support only recursive or hierarchical chunking",
+            )
         if upload["company_id"] != payload.company_id:
             raise HTTPException(422, "Uploaded document belongs to a different company")
         company = request.app.state.repository.get_company(payload.company_id)
         if not company:
             raise HTTPException(404, "Company not found")
         duplicate = request.app.state.repository.get_by_checksum(checksum, payload.company_id)
-        if duplicate:
+        if duplicate and duplicate.id != replacement_id:
             raise HTTPException(
                 409,
                 f'This document content is already imported as "{duplicate.name}"',
             )
-        if request.app.state.repository.name_exists(payload.name, payload.company_id):
+        existing_name = request.app.state.repository.get(replacement_id) if replacement_id else None
+        if (
+            request.app.state.repository.name_exists(payload.name, payload.company_id)
+            and (not existing_name or existing_name.name != payload.name)
+        ):
             raise HTTPException(409, f'A knowledge base named "{payload.name}" already exists')
         try:
-            result = await request.app.state.importer.import_document(payload, filename, checksum)
+            if source_is_url:
+                result = await request.app.state.importer.import_web_page(
+                    payload,
+                    source,
+                    checksum,
+                    upload["text"],
+                    replacement_id,
+                )
+            else:
+                result = await request.app.state.importer.import_document(
+                    payload, source, checksum
+                )
             request.app.state.uploads.pop(payload.document_id, None)
             return result
         except DuplicateDocumentContent as exc:
@@ -297,6 +392,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return ChatSessionDetail(
             session=chat_session,
             messages=request.app.state.repository.list_chat_messages(session_id),
+        )
+
+    @app.delete("/api/v1/chat-sessions", response_model=ChatSessionDeleteResult)
+    def delete_chat_sessions(
+        payload: ChatSessionDeleteRequest, request: Request
+    ) -> ChatSessionDeleteResult:
+        repository = request.app.state.repository
+        if not repository.get_company(payload.company_id):
+            raise HTTPException(404, "Company not found")
+        if payload.session_ids is not None:
+            if payload.date_from is not None or payload.date_to is not None:
+                raise HTTPException(422, "Use session_ids or a date range, not both")
+            return ChatSessionDeleteResult(
+                deleted=repository.delete_chat_sessions(
+                    payload.company_id,
+                    payload.session_ids,
+                )
+            )
+        if payload.date_from is None or payload.date_to is None:
+            raise HTTPException(422, "Provide session_ids or both date_from and date_to")
+        if payload.date_from > payload.date_to:
+            raise HTTPException(422, "date_from must not be after date_to")
+        if (payload.date_to - payload.date_from).days >= MAX_CHAT_SESSION_DATE_RANGE_DAYS:
+            raise HTTPException(
+                422,
+                f"Chat session date range cannot exceed {MAX_CHAT_SESSION_DATE_RANGE_DAYS} days",
+            )
+        created_from = datetime.combine(payload.date_from, time.min, tzinfo=timezone.utc)
+        created_to = datetime.combine(
+            payload.date_to + timedelta(days=1), time.min, tzinfo=timezone.utc
+        )
+        return ChatSessionDeleteResult(
+            deleted=repository.delete_chat_sessions_in_range(
+                payload.company_id,
+                created_from=created_from,
+                created_to=created_to,
+            )
         )
 
     @app.patch("/api/v1/knowledge-bases/{knowledge_base_id}", response_model=KnowledgeBase)
