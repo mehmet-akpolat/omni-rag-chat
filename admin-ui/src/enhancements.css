@@ -401,6 +401,204 @@ input:disabled {
   width: 100%;
 }
 
+.llm-configuration {
+  margin: 0 0 16px;
+  padding: 13px;
+  border: 1px solid color-mix(in srgb, var(--brand) 24%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--brand2) 62%, var(--panel));
+}
+
+.llm-configuration-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 12px;
+  color: var(--brand);
+}
+
+.llm-configuration-title span,
+.llm-configuration-title b,
+.llm-configuration-title small {
+  display: block;
+}
+
+.llm-configuration-title b {
+  font-size: 11px;
+}
+
+.llm-configuration-title small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.llm-selector-grid {
+  display: grid;
+  grid-template-columns: 0.86fr 1.14fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.llm-select {
+  position: relative;
+  min-width: 0;
+}
+
+.llm-select-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.llm-select-trigger {
+  width: 100%;
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+
+.llm-select-trigger:hover:not(:disabled),
+.llm-select.open .llm-select-trigger {
+  border-color: color-mix(in srgb, var(--brand) 58%, var(--line));
+  background: color-mix(in srgb, var(--brand2) 26%, var(--panel));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 9%, transparent);
+}
+
+.llm-select-trigger > svg {
+  color: var(--muted);
+  transition: transform 0.16s ease;
+}
+
+.llm-select.open .llm-select-trigger > svg {
+  transform: rotate(180deg);
+}
+
+.llm-option-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  border: 1px solid #d9e0dc;
+  color: #52625a;
+  background: #fff;
+}
+
+.llm-option-icon img {
+  width: 19px;
+  height: 19px;
+  display: block;
+  object-fit: contain;
+}
+
+.llm-option-icon.provider-openai { border-color: #9ed8c9; color: #168a72; background: #edf9f5; }
+.llm-option-icon.provider-anthropic { border-color: #e2b9aa; color: #9f5035; background: #fff4ef; }
+.llm-option-icon.provider-huggingface { border-color: #efd37d; color: #aa7700; background: #fff9df; }
+.llm-option-icon.provider-ollama { border-color: #cbd3ce; color: #36453d; background: #f4f6f5; }
+
+.llm-option-copy {
+  min-width: 0;
+}
+
+.llm-option-copy b,
+.llm-option-copy small {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.llm-option-copy b {
+  font-size: 11px;
+}
+
+.llm-option-copy small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.llm-select-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 3px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--brand) 24%, var(--line));
+  border-radius: 11px;
+  background: var(--panel);
+  box-shadow: 0 18px 45px rgba(18, 38, 27, 0.18);
+}
+
+.llm-select-menu button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.llm-select-menu button:hover,
+.llm-select-menu button.selected {
+  border-color: color-mix(in srgb, var(--brand) 35%, var(--line));
+  background: var(--brand2);
+}
+
+.llm-select-menu button > svg {
+  color: var(--brand);
+}
+
+.llm-api-key {
+  margin: 2px 0 0;
+}
+
+.llm-api-key input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.04em;
+}
+
+.llm-api-key small {
+  line-height: 1.45;
+}
+
+.api-key-preview code {
+  margin-left: 3px;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--brand2) 74%, var(--panel));
+  color: var(--brand);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+@media (max-width: 720px) {
+  .llm-selector-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .avatar-options {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

@@ -6,9 +6,10 @@ from xml.etree import ElementTree
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from packages.omni_rag_core.ai import OllamaClient
+from packages.omni_rag_core.credentials import CredentialEncryptionError
 from packages.omni_rag_core.documents import DocumentStore, InvalidDocument
 from packages.omni_rag_core.domain import (
     ChunkingStrategy,
@@ -16,10 +17,13 @@ from packages.omni_rag_core.domain import (
     ChatSessionMessage,
     Company,
     CompanyInput,
+    CompanyLLMMapping,
     CompanyView,
     DocumentPreview,
     ImportRequest,
     KnowledgeBase,
+    LLMProvider,
+    LLMSelection,
     PagePreview,
 )
 from packages.omni_rag_core.repository import (
@@ -76,6 +80,28 @@ class KnowledgeBaseState(BaseModel):
     enabled: bool
 
 
+class CompanyLLMInput(LLMSelection):
+    api_key: str | None = Field(default=None, max_length=4096)
+
+    @field_validator("api_key")
+    @classmethod
+    def normalize_api_key(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+
+class CompanyLLMView(LLMSelection):
+    has_api_key: bool = False
+    api_key_masked: str | None = None
+
+
+class CompanyConfigurationInput(CompanyInput):
+    llm: CompanyLLMInput | None = None
+
+
+class CompanyConfigurationView(CompanyView):
+    llm: CompanyLLMView | None = None
+
+
 class UrlPreviewRequest(BaseModel):
     company_id: str
     url: str = Field(min_length=8, max_length=2048)
@@ -117,13 +143,46 @@ def is_url_mime(mime_type: str) -> bool:
     return mime_type in {"text/html", "application/xhtml+xml"}
 
 
+def masked_api_key(api_key: str | None) -> str | None:
+    if not api_key:
+        return None
+    if len(api_key) < 4:
+        return "•" * len(api_key)
+    return f"{api_key[:2]}{'•' * 8}{api_key[-2:]}"
+
+
+def validate_llm_selection(selection: LLMSelection, config: Settings) -> None:
+    if selection.model not in config.llm_models[selection.provider.value]:
+        raise HTTPException(
+            422,
+            f'{selection.model} is not configured for provider "{selection.provider.value}"',
+        )
+
+
+def company_configuration(company: Company, repository) -> CompanyConfigurationView:
+    mapping = repository.get_company_llm_mapping(company.id)
+    return CompanyConfigurationView(
+        **CompanyView.model_validate(company.model_dump()).model_dump(),
+        llm=(
+            CompanyLLMView(
+                provider=mapping.provider,
+                model=mapping.model,
+                has_api_key=mapping.has_api_key,
+                api_key_masked=masked_api_key(mapping.api_key),
+            )
+            if mapping
+            else None
+        ),
+    )
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     config = settings or get_settings()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         documents = DocumentStore(config.upload_dir)
-        repository = SqlKnowledgeRepository(config.database_url)
+        repository = SqlKnowledgeRepository(config.database_url, config.llm_credentials_key)
         vectors = ResilientVectorStore(QdrantVectorStore(config))
         app.state.documents = documents
         app.state.repository = repository
@@ -182,6 +241,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "name": "Hierarchical",
                 "description": "Indexes parent sections alongside smaller child chunks.",
             },
+        ]
+
+    @app.get("/api/v1/llm-options")
+    def llm_options() -> list[dict[str, object]]:
+        return [
+            {"provider": provider.value, "models": list(config.llm_models[provider.value])}
+            for provider in LLMProvider
         ]
 
     @app.post("/api/v1/documents/preview", response_model=DocumentPreview)
@@ -456,9 +522,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request.app.state.repository.delete(knowledge_base_id)
         return Response(status_code=204)
 
-    @app.get("/api/v1/companies", response_model=list[CompanyView])
-    def list_companies(request: Request) -> list[Company]:
-        return request.app.state.repository.list_companies()
+    @app.get("/api/v1/companies", response_model=list[CompanyConfigurationView])
+    def list_companies(request: Request) -> list[CompanyConfigurationView]:
+        repository = request.app.state.repository
+        return [company_configuration(company, repository) for company in repository.list_companies()]
 
     @app.get("/api/v1/companies/{company_id}/logo")
     def get_company_logo(company_id: str, request: Request) -> Response:
@@ -475,10 +542,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
-    @app.put("/api/v1/companies/{company_id}/logo", response_model=CompanyView)
+    @app.put("/api/v1/companies/{company_id}/logo", response_model=CompanyConfigurationView)
     async def update_company_logo(
         company_id: str, request: Request, file: UploadFile = File(...)
-    ) -> Company:
+    ) -> CompanyConfigurationView:
         company = request.app.state.repository.get_company(company_id)
         if not company:
             raise HTTPException(404, "Company not found")
@@ -491,7 +558,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not valid_logo(content, mime_type):
             raise HTTPException(422, "The selected file is not a valid image")
         company = company.model_copy(update={"logo_data": content, "logo_mime_type": mime_type})
-        return request.app.state.repository.save_company(company)
+        company = request.app.state.repository.save_company(company)
+        return company_configuration(company, request.app.state.repository)
 
     @app.delete("/api/v1/companies/{company_id}/logo", status_code=204)
     def delete_company_logo(company_id: str, request: Request) -> Response:
@@ -503,35 +571,96 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return Response(status_code=204)
 
-    @app.post("/api/v1/companies", response_model=CompanyView, status_code=201)
-    async def create_company(payload: CompanyInput, request: Request) -> Company:
+    @app.post("/api/v1/companies", response_model=CompanyConfigurationView, status_code=201)
+    async def create_company(
+        payload: CompanyConfigurationInput, request: Request
+    ) -> CompanyConfigurationView:
+        selection = payload.llm
+        if selection:
+            validate_llm_selection(selection, config)
         if request.app.state.repository.company_name_exists(payload.name):
             raise HTTPException(409, f'A company named "{payload.name}" already exists')
+        if selection and selection.provider != LLMProvider.OLLAMA:
+            if not selection.api_key:
+                raise HTTPException(422, "An API key is required for the selected provider")
+            if not config.llm_credentials_key:
+                raise HTTPException(503, "LLM credential encryption is not configured")
         try:
-            return await request.app.state.companies.index(Company(**payload.model_dump()))
+            company = await request.app.state.companies.index(
+                Company(**payload.model_dump(exclude={"llm"}))
+            )
+            if selection:
+                request.app.state.repository.save_company_llm_mapping(
+                    CompanyLLMMapping(
+                        company_id=company.id,
+                        provider=selection.provider,
+                        model=selection.model,
+                        api_key=selection.api_key,
+                    )
+                )
+            return company_configuration(company, request.app.state.repository)
         except DuplicateCompanyName as exc:
             raise HTTPException(409, str(exc)) from exc
+        except CredentialEncryptionError as exc:
+            raise HTTPException(503, str(exc)) from exc
         except CompanyIndexingError as exc:
             raise HTTPException(503, str(exc)) from exc
 
-    @app.put("/api/v1/companies/{company_id}", response_model=CompanyView)
-    async def update_company(company_id: str, payload: CompanyInput, request: Request) -> Company:
+    @app.put("/api/v1/companies/{company_id}", response_model=CompanyConfigurationView)
+    async def update_company(
+        company_id: str, payload: CompanyConfigurationInput, request: Request
+    ) -> CompanyConfigurationView:
         existing = request.app.state.repository.get_company(company_id)
         if not existing:
             raise HTTPException(404, "Company not found")
+        selection = payload.llm
+        stored_mapping = request.app.state.repository.get_company_llm_mapping(
+            company_id, include_api_key=False
+        )
+        if "llm" not in payload.model_fields_set:
+            if stored_mapping:
+                selection = CompanyLLMInput(
+                    provider=stored_mapping.provider,
+                    model=stored_mapping.model,
+                )
+        if selection:
+            validate_llm_selection(selection, config)
+        if selection and selection.provider != LLMProvider.OLLAMA:
+            has_preserved_key = bool(
+                stored_mapping
+                and stored_mapping.provider == selection.provider
+                and stored_mapping.has_api_key
+            )
+            if not selection.api_key and not has_preserved_key:
+                raise HTTPException(422, "An API key is required for the selected provider")
+            if not config.llm_credentials_key:
+                raise HTTPException(503, "LLM credential encryption is not configured")
         company = Company(
-            **payload.model_dump(),
+            **payload.model_dump(exclude={"llm"}),
             id=company_id,
             created_at=existing.created_at,
             logo_data=existing.logo_data,
             logo_mime_type=existing.logo_mime_type,
+            updated_at=existing.updated_at,
         )
         if request.app.state.repository.company_name_exists(company.name, exclude_id=company_id):
             raise HTTPException(409, f'A company named "{company.name}" already exists')
         try:
-            return await request.app.state.companies.index(company)
+            company = await request.app.state.companies.index(company)
+            if selection:
+                request.app.state.repository.save_company_llm_mapping(
+                    CompanyLLMMapping(
+                        company_id=company.id,
+                        provider=selection.provider,
+                        model=selection.model,
+                        api_key=selection.api_key,
+                    )
+                )
+            return company_configuration(company, request.app.state.repository)
         except DuplicateCompanyName as exc:
             raise HTTPException(409, str(exc)) from exc
+        except CredentialEncryptionError as exc:
+            raise HTTPException(503, str(exc)) from exc
         except CompanyIndexingError as exc:
             raise HTTPException(503, str(exc)) from exc
 

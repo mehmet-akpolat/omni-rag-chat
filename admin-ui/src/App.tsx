@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, BookOpenCheck, Bot, BrainCircuit, Building2, CalendarDays, Check, ChevronDown, ChevronUp, CirclePause, CirclePlay, Eye, FileText, Globe2, Headset, ImagePlus, Layers3, Library, Link2, Mail, MapPin, MapPinned, MessageSquareText, Moon, Pencil, Phone, RefreshCw, RotateCcw, Search, Settings2, Sparkles, Sun, Trash2, UploadCloud, UserRound, X } from 'lucide-react';
-import { companyLogoUrl, createChatSession, deleteChatSessions, deleteCompany, deleteCompanyLogo, deleteFilteredChatSessions, deleteKnowledgeBase, getChatSession, importKnowledgeBase, listChatSessions, listCompanies, listKnowledgeBases, previewPdf, previewUrl, saveCompany, saveCompanyLogo, setKnowledgeBaseEnabled } from './api';
-import type { BotAvatar, ChatSession, ChatSessionDetail, Company, KnowledgeBase, KnowledgeSourceType, Preview, Strategy } from './types';
+import anthropicBrandIcon from '@lobehub/icons-static-svg/icons/anthropic.svg';
+import huggingFaceBrandIcon from '@lobehub/icons-static-svg/icons/huggingface-color.svg';
+import ollamaBrandIcon from '@lobehub/icons-static-svg/icons/ollama.svg';
+import openAIBrandIcon from '@lobehub/icons-static-svg/icons/openai.svg';
+import { companyLogoUrl, createChatSession, deleteChatSessions, deleteCompany, deleteCompanyLogo, deleteFilteredChatSessions, deleteKnowledgeBase, getChatSession, importKnowledgeBase, listChatSessions, listCompanies, listKnowledgeBases, listLLMOptions, previewPdf, previewUrl, saveCompany, saveCompanyLogo, setKnowledgeBaseEnabled } from './api';
+import type { BotAvatar, ChatSession, ChatSessionDetail, Company, KnowledgeBase, KnowledgeSourceType, LLMOption, LLMProvider, Preview, Strategy } from './types';
 
 const strategies: {id: Strategy; name: string; caption: string}[] = [
   {id: 'fixed', name: 'Fixed-size', caption: 'Consistent, predictable windows'},
@@ -18,7 +22,9 @@ const MESSAGE_TIMEOUT_MS = 5_000;
 const CHATBOT_UI_URL = import.meta.env.VITE_CHATBOT_UI_URL || 'http://localhost:5174';
 const DEFAULT_BOT_GREET_MESSAGE = "Hello! I'm {{bot_alias}}, the AI assistant for {{company_name}}. How can I help you today?";
 const GREETING_PLACEHOLDERS = new Set(['bot_alias', 'company_name']);
-const emptyCompany = {name: '', about: '', phone: '', email: '', address: '', maps_url: '', bot_alias: 'AIBot', bot_avatar: 'bot' as BotAvatar, bot_greet_message: DEFAULT_BOT_GREET_MESSAGE};
+function emptyCompany() {
+  return {name: '', about: '', phone: '', email: '', address: '', maps_url: '', bot_alias: 'AIBot', bot_avatar: 'bot' as BotAvatar, bot_greet_message: DEFAULT_BOT_GREET_MESSAGE};
+}
 const avatarOptions: {id: BotAvatar; label: string}[] = [
   {id: 'bot', label: 'General AI'},
   {id: 'brain', label: 'Knowledge expert'},
@@ -106,6 +112,68 @@ function avatarIcon(avatar: BotAvatar, size = 18) {
   return <Bot size={size}/>;
 }
 
+export function providerLabel(provider: LLMProvider): string {
+  if (provider === 'openai') return 'OpenAI';
+  if (provider === 'huggingface') return 'HuggingFace';
+  return provider.charAt(0).toUpperCase() + provider.slice(1);
+}
+
+export function maskApiKey(value: string): string {
+  if (value.length < 4) return '•'.repeat(value.length);
+  return `${value.slice(0, 2)}${'•'.repeat(8)}${value.slice(-2)}`;
+}
+
+function providerIcon(provider: LLMProvider, size = 17) {
+  const icons: Record<LLMProvider, string> = {
+    openai: openAIBrandIcon,
+    anthropic: anthropicBrandIcon,
+    huggingface: huggingFaceBrandIcon,
+    ollama: ollamaBrandIcon,
+  };
+  return <img src={icons[provider]} width={size} height={size} alt="" aria-hidden="true"/>;
+}
+
+function LLMSelect({label, value, options, onChange, provider, providerOptions = false, disabled = false}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+  provider?: LLMProvider;
+  providerOptions?: boolean;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function close(event: MouseEvent) {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
+  const selectedProvider = (providerOptions ? value : provider) as LLMProvider | undefined;
+  const placeholder = providerOptions ? 'Choose provider' : provider ? 'Choose model' : 'Choose provider first';
+  return <div className={`llm-select ${open ? 'open' : ''}`} ref={root}>
+    <span className="llm-select-label">{label}</span>
+    <button type="button" className="llm-select-trigger" role="combobox" aria-expanded={open} aria-haspopup="listbox" disabled={disabled} onClick={() => setOpen(current => !current)}>
+      <span className={`llm-option-icon${selectedProvider ? ` provider-${selectedProvider}` : ''}`}>{providerOptions && selectedProvider ? providerIcon(selectedProvider) : providerOptions ? <Layers3 size={17}/> : <BrainCircuit size={17}/>}</span>
+      <span className="llm-option-copy"><b>{value ? (providerOptions && selectedProvider ? providerLabel(selectedProvider) : value) : placeholder}</b><small>{selectedProvider ? (providerOptions ? (selectedProvider === 'ollama' ? 'Local model runtime' : 'Cloud model provider') : `${providerLabel(selectedProvider)} model`) : 'No language model selected'}</small></span>
+      <ChevronDown size={16}/>
+    </button>
+    {open && <div className="llm-select-menu" role="listbox" aria-label={label}>
+      {options.map(option => {
+        const optionProvider = (providerOptions ? option : provider) as LLMProvider;
+        const selected = option === value;
+        return <button type="button" role="option" aria-selected={selected} className={selected ? 'selected' : ''} key={option} onClick={() => { onChange(option); setOpen(false); }}>
+          <span className={`llm-option-icon provider-${optionProvider}`}>{providerOptions ? providerIcon(optionProvider) : <BrainCircuit size={16}/>}</span>
+          <span className="llm-option-copy"><b>{providerOptions ? providerLabel(optionProvider) : option}</b><small>{providerOptions ? (optionProvider === 'ollama' ? 'Runs locally without an API key' : `Use ${providerLabel(optionProvider)} API`) : `${providerLabel(optionProvider)} · supported model`}</small></span>
+          {selected && <Check size={15}/>}
+        </button>;
+      })}
+    </div>}
+  </div>;
+}
+
 function safeExternalUrl(value?: string): string | undefined {
   if (!value?.trim()) return undefined;
   try {
@@ -155,6 +223,7 @@ export function App() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [view, setView] = useState<'knowledge' | 'sessions' | 'companies'>('knowledge');
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [llmOptions, setLLMOptions] = useState<LLMOption[]>([]);
   const [activeCompanyId, setActiveCompanyId] = useState('');
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [chatSessionPage, setChatSessionPage] = useState(1);
@@ -170,7 +239,7 @@ export function App() {
   const [chatSessionDeleteBusy, setChatSessionDeleteBusy] = useState(false);
   const [chatSessionFrom, setChatSessionFrom] = useState(() => dateInputValue(new Date(Date.now() - 6 * 86_400_000)));
   const [chatSessionTo, setChatSessionTo] = useState(() => dateInputValue(new Date()));
-  const [companyDraft, setCompanyDraft] = useState<Partial<Company> & Pick<Company, 'name'>>(emptyCompany);
+  const [companyDraft, setCompanyDraft] = useState<Partial<Company> & Pick<Company, 'name'>>(() => emptyCompany());
   const [companyBusy, setCompanyBusy] = useState(false);
   const [companyError, setCompanyError] = useState('');
   const [companyToDelete, setCompanyToDelete] = useState<Company | null>(null);
@@ -187,6 +256,9 @@ export function App() {
   const activeCompany = companies.find(company => company.id === activeCompanyId);
   const mapsLink = safeExternalUrl(companyDraft.maps_url);
   const previewIsUrl = Boolean(preview && isUrlMime(preview.mime_type));
+  const draftProvider = companyDraft.llm?.provider;
+  const draftModelOptions = draftProvider ? llmOptions.find(option => option.provider === draftProvider)?.models || [] : [];
+  const draftModel = companyDraft.llm?.model || '';
 
   const loadKnowledgeBases = useCallback(async (targetPage: number, query: string, companyId: string) => {
     if (!companyId) { setItems([]); setTotal(0); setTotalPages(0); setListLoading(false); return; }
@@ -232,6 +304,12 @@ export function App() {
     listCompanies().then(result => {
       setCompanies(result);
     }).catch(err => setCompanyError(err instanceof Error ? err.message : 'Could not load companies'));
+    listLLMOptions().then(options => {
+      setLLMOptions(options);
+    }).catch(() => {
+      setLLMOptions([]);
+      setCompanyError('Could not load language-model configuration');
+    });
   }, []);
   useEffect(() => {
     importInitializedFor.current = '';
@@ -371,7 +449,7 @@ export function App() {
   }
 
   function resetCompanyEditor() {
-    setCompanyDraft(emptyCompany); setCompanyLogo(null); setRemoveLogo(false);
+    setCompanyDraft(emptyCompany()); setCompanyLogo(null); setRemoveLogo(false);
     if (companyLogoInput.current) companyLogoInput.current.value = '';
   }
 
@@ -406,7 +484,7 @@ export function App() {
   }
 
   function editCompany(company: Company) {
-    setCompanyDraft(company); setCompanyLogo(null); setRemoveLogo(false);
+    setCompanyDraft({...company, llm:company.llm ? {...company.llm, api_key:''} : undefined}); setCompanyLogo(null); setRemoveLogo(false);
     if (companyLogoInput.current) companyLogoInput.current.value = '';
   }
 
@@ -697,11 +775,19 @@ export function App() {
           <label><MapPin size={13}/> Address<textarea value={companyDraft.address || ''} onChange={event => setCompanyDraft(current => ({...current, address:event.target.value}))}/></label>
           <label>Maps URL<div className="map-url-field"><input value={companyDraft.maps_url || ''} onChange={event => setCompanyDraft(current => ({...current, maps_url:event.target.value}))} placeholder="https://maps.google.com/…"/>{mapsLink ? <a href={mapsLink} target="_blank" rel="noreferrer" aria-label="Open location in a new tab" title="Open location in a new tab"><MapPinned size={17}/></a> : <button type="button" disabled aria-label="Enter a valid Maps URL to open location" title="Enter a valid Maps URL"><MapPinned size={17}/></button>}</div></label>
           <div className="two-col"><label>Bot alias<input required minLength={2} value={companyDraft.bot_alias || 'AIBot'} onChange={event => setCompanyDraft(current => ({...current, bot_alias:event.target.value}))}/></label><fieldset><legend>Bot avatar</legend><div className="avatar-options">{avatarOptions.map(avatar => <button type="button" key={avatar.id} className={`avatar-${avatar.id} ${companyDraft.bot_avatar === avatar.id ? 'selected' : ''}`} onClick={() => setCompanyDraft(current => ({...current, bot_avatar:avatar.id}))} aria-label={avatar.label} title={avatar.label}>{avatarIcon(avatar.id)}</button>)}</div></fieldset></div>
+          <div className="llm-configuration">
+            <div className="llm-configuration-title"><BrainCircuit size={17}/><span><b>Language model</b><small>Optional — choose the provider and model used for this company's chatbot.</small></span></div>
+            <div className="llm-selector-grid">
+              <LLMSelect label="Provider" value={draftProvider || ''} provider={draftProvider} providerOptions options={llmOptions.map(option => option.provider)} onChange={value => { const provider = value as LLMProvider; const option = llmOptions.find(item => item.provider === provider); setCompanyDraft(current => ({...current, llm:{provider, model:option?.models[0] || '', api_key:'', has_api_key:false, api_key_masked:undefined}})); }}/>
+              <LLMSelect label="Model" value={draftModel} provider={draftProvider} options={draftModelOptions} disabled={!draftProvider} onChange={model => setCompanyDraft(current => ({...current, llm:{...current.llm!, provider:draftProvider!, model}}))}/>
+            </div>
+            {draftProvider && draftProvider !== 'ollama' && <label className="llm-api-key">API key<input type="password" autoComplete="new-password" value={companyDraft.llm?.api_key || ''} onChange={event => setCompanyDraft(current => ({...current, llm:{...current.llm!, api_key:event.target.value}}))} placeholder={companyDraft.llm?.api_key_masked || 'Enter provider API key'} required={!companyDraft.llm?.has_api_key}/>{companyDraft.llm?.api_key ? <small className="api-key-preview">Key preview: <code>{maskApiKey(companyDraft.llm.api_key)}</code></small> : <small>{companyDraft.llm?.has_api_key ? `Stored as ${companyDraft.llm.api_key_masked}. Leave blank to keep this key.` : 'Required for this company and stored encrypted. The complete key is never returned to the browser.'}</small>}</label>}
+          </div>
           <label>Bot greeting message<textarea maxLength={400} value={companyDraft.bot_greet_message || ''} onChange={event => setCompanyDraft(current => ({...current, bot_greet_message:event.target.value}))} placeholder={DEFAULT_BOT_GREET_MESSAGE}/><small>{companyDraft.bot_greet_message?.length || 0}/400 · Only {'{{bot_alias}}'} and {'{{company_name}}'} placeholders are allowed</small></label>
           {companyError && <div className="notice error">{companyError}</div>}
           <button className="primary" disabled={companyBusy}>{companyBusy ? 'Saving…' : companyDraft.id ? 'Update company' : 'Create company'}<ArrowRight size={16}/></button>
         </form>
-        <div className="company-list"><div className="section-heading"><div><p className="eyebrow">COMPANIES</p><h2>{companies.length} configured</h2></div></div>{companies.length === 0 ? <div className="company-empty"><Building2 size={25}/><b>No companies yet</b><span>Create one to begin importing knowledge.</span></div> : companies.map(company => <article className="company-card" key={company.id}><div className="company-logo">{company.has_logo ? <img src={companyLogoUrl(company.id)} alt=""/> : <Building2 size={22}/>}</div><div className="company-card-main"><div><b>{company.name}</b><span>{company.about || 'No company description yet.'}</span></div><div className="company-meta"><span>{avatarIcon(company.bot_avatar, 14)} {company.bot_alias}</span>{company.email && <span><Mail size={13}/>{company.email}</span>}{company.phone && <span><Phone size={13}/>{company.phone}</span>}</div></div><div className="company-actions"><button onClick={() => editCompany(company)} aria-label={`Edit ${company.name}`}><Pencil size={15}/></button><button className="delete" onClick={() => setCompanyToDelete(company)} aria-label={`Delete ${company.name}`}><Trash2 size={15}/></button></div></article>)}</div>
+        <div className="company-list"><div className="section-heading"><div><p className="eyebrow">COMPANIES</p><h2>{companies.length} configured</h2></div></div>{companies.length === 0 ? <div className="company-empty"><Building2 size={25}/><b>No companies yet</b><span>Create one to begin importing knowledge.</span></div> : companies.map(company => <article className="company-card" key={company.id}><div className="company-logo">{company.has_logo ? <img src={companyLogoUrl(company.id)} alt=""/> : <Building2 size={22}/>}</div><div className="company-card-main"><div><b>{company.name}</b><span>{company.about || 'No company description yet.'}</span></div><div className="company-meta"><span>{avatarIcon(company.bot_avatar, 14)} {company.bot_alias}</span><span><BrainCircuit size={13}/>{company.llm ? `${providerLabel(company.llm.provider)} · ${company.llm.model}` : 'Language model not configured'}</span>{company.email && <span><Mail size={13}/>{company.email}</span>}{company.phone && <span><Phone size={13}/>{company.phone}</span>}</div></div><div className="company-actions"><button onClick={() => editCompany(company)} aria-label={`Edit ${company.name}`}><Pencil size={15}/></button><button className="delete" onClick={() => setCompanyToDelete(company)} aria-label={`Delete ${company.name}`}><Trash2 size={15}/></button></div></article>)}</div>
       </section>}
     </main>
     {confirmation && <div className="confirmation-backdrop" onMouseDown={() => !rowBusy && setConfirmation(null)}><section className={`confirmation-dialog ${confirmation.type}`} role="dialog" aria-modal="true" aria-labelledby="confirmation-title" onMouseDown={event => event.stopPropagation()}><div className="confirmation-icon">{confirmation.type === 'delete' ? <AlertTriangle size={22}/> : <CirclePause size={22}/>}</div><div className="confirmation-copy"><p className="eyebrow">{confirmation.type === 'delete' ? 'PERMANENT ACTION' : 'CHANGE AVAILABILITY'}</p><h2 id="confirmation-title">{confirmation.type === 'delete' ? `Delete ${confirmation.items.length === 1 ? 'knowledge base' : `${confirmation.items.length} knowledge bases`}?` : `Disable ${confirmation.items.length === 1 ? 'knowledge base' : `${confirmation.items.length} knowledge bases`}?`}</h2><p>{confirmation.type === 'delete' ? 'This permanently removes the selected knowledge-base records and all associated vector chunks. This action cannot be undone.' : 'The selected sources will disappear from the chatbot and will not be used for retrieval. You can enable them again at any time.'}</p><div className="confirmation-target">{confirmation.items.length === 1 && isUrlMime(confirmation.items[0].mime_type) ? <Globe2 size={17}/> : <FileText size={17}/>}<span><b>{confirmation.items.length === 1 ? confirmation.items[0].name : `${confirmation.items.length} knowledge bases selected`}</b><small>{confirmation.items.length === 1 ? `${confirmation.items[0].chunk_count} chunks · ${isUrlMime(confirmation.items[0].mime_type) ? 'web page' : `${confirmation.items[0].selected_pages} pages`}` : confirmation.items.map(item => item.name).join(', ')}</small></span></div></div><div className="confirmation-actions"><button className="cancel" autoFocus disabled={Boolean(rowBusy)} onClick={() => setConfirmation(null)}>Keep {confirmation.items.length === 1 ? 'knowledge base' : 'knowledge bases'}</button><button className={confirmation.type === 'delete' ? 'confirm-delete' : 'confirm-disable'} disabled={Boolean(rowBusy)} onClick={confirmKnowledgeBaseAction}>{rowBusy ? 'Working…' : confirmation.type === 'delete' ? `Delete ${confirmation.items.length === 1 ? 'permanently' : 'selected'}` : `Disable ${confirmation.items.length === 1 ? 'knowledge base' : 'selected'}`}</button></div></section></div>}

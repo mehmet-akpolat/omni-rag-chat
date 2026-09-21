@@ -1,4 +1,4 @@
-import type { ChatSessionDetail, ChatSessionPage, Company, KnowledgeBase, KnowledgeBasePage, Preview, Strategy } from './types';
+import type { ChatSessionDetail, ChatSessionPage, Company, KnowledgeBase, KnowledgeBasePage, LLMOption, Preview, Strategy } from './types';
 const BASE = import.meta.env.VITE_ADMIN_API_URL || 'http://localhost:8001/api/v1';
 const CHAT_BASE = import.meta.env.VITE_CHAT_API_URL || 'http://localhost:8002/api/v1';
 
@@ -25,6 +25,7 @@ export async function listKnowledgeBases(page = 1, pageSize = 10, search = '', c
 }
 
 export async function listCompanies(): Promise<Company[]> { return checked(await fetch(`${BASE}/companies`)); }
+export async function listLLMOptions(): Promise<LLMOption[]> { return checked(await fetch(`${BASE}/llm-options`)); }
 export async function createChatSession(companyId: string): Promise<{session: ChatSessionDetail['session']}> {
   return checked(await fetch(`${CHAT_BASE}/chat-sessions`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({company_id:companyId})}));
 }
