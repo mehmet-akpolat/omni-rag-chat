@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, BookOpenCheck, Bot, BrainCircuit, Building2, CalendarDays, Check, ChevronDown, ChevronUp, CirclePause, CirclePlay, Eye, FileText, Globe2, Headset, ImagePlus, Layers3, Library, Link2, Mail, MapPin, MapPinned, MessageSquareText, Moon, Pencil, Phone, RefreshCw, RotateCcw, Search, Settings2, Sparkles, Sun, Trash2, UploadCloud, UserRound, X } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowLeft, ArrowRight, BarChart3, BookOpen, BookOpenCheck, Bot, BrainCircuit, Building2, CalendarDays, Check, ChevronDown, ChevronUp, CirclePause, CirclePlay, Coins, Eye, FileText, Gauge, Globe2, Headset, ImagePlus, Layers3, Library, Link2, Mail, MapPin, MapPinned, MessageSquareText, Moon, Pencil, Phone, RefreshCw, RotateCcw, Search, Settings2, Sparkles, Sun, Trash2, UploadCloud, UserRound, X } from 'lucide-react';
 import anthropicBrandIcon from '@lobehub/icons-static-svg/icons/anthropic.svg';
 import huggingFaceBrandIcon from '@lobehub/icons-static-svg/icons/huggingface-color.svg';
 import ollamaBrandIcon from '@lobehub/icons-static-svg/icons/ollama.svg';
 import openAIBrandIcon from '@lobehub/icons-static-svg/icons/openai.svg';
-import { companyLogoUrl, createChatSession, deleteChatSessions, deleteCompany, deleteCompanyLogo, deleteFilteredChatSessions, deleteKnowledgeBase, getChatSession, importKnowledgeBase, listChatSessions, listCompanies, listKnowledgeBases, listLLMOptions, previewPdf, previewUrl, saveCompany, saveCompanyLogo, setKnowledgeBaseEnabled } from './api';
-import type { BotAvatar, ChatSession, ChatSessionDetail, Company, KnowledgeBase, KnowledgeSourceType, LLMOption, LLMProvider, Preview, Strategy } from './types';
+import { companyLogoUrl, createChatSession, deleteChatSessions, deleteCompany, deleteCompanyLogo, deleteFilteredChatSessions, deleteKnowledgeBase, getAnalytics, getChatSession, importKnowledgeBase, listChatSessions, listCompanies, listKnowledgeBases, listLLMOptions, previewPdf, previewUrl, saveCompany, saveCompanyLogo, setKnowledgeBaseEnabled } from './api';
+import type { AnalyticsDailyPoint, BotAvatar, ChatAnalytics, ChatSession, ChatSessionDetail, Company, KnowledgeBase, KnowledgeSourceType, LLMOption, LLMProvider, Preview, Strategy } from './types';
 
 const strategies: {id: Strategy; name: string; caption: string}[] = [
   {id: 'fixed', name: 'Fixed-size', caption: 'Consistent, predictable windows'},
@@ -18,6 +18,7 @@ type ConfirmationAction = { type: 'disable' | 'delete'; items: KnowledgeBase[] }
 const PAGE_SIZE = 10;
 const CHAT_SESSION_PAGE_SIZES = [5, 10, 20, 50] as const;
 const MAX_CHAT_SESSION_DATE_RANGE_DAYS = 14;
+const MAX_ANALYTICS_DATE_RANGE_DAYS = 90;
 const MESSAGE_TIMEOUT_MS = 5_000;
 const CHATBOT_UI_URL = import.meta.env.VITE_CHATBOT_UI_URL || 'http://localhost:5174';
 const DEFAULT_BOT_GREET_MESSAGE = "Hello! I'm {{bot_alias}}, the AI assistant for {{company_name}}. How can I help you today?";
@@ -70,6 +71,48 @@ export function formatSessionDuration(createdAt: string, endedAt?: string): stri
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes} ${minutes === 1 ? 'min' : 'mins'} ${seconds} ${seconds === 1 ? 'sec' : 'secs'}`;
+}
+
+export function formatMetric(value: number, maximumFractionDigits = 0): string {
+  return new Intl.NumberFormat(undefined, {maximumFractionDigits}).format(value);
+}
+
+type TrendSeries = {label: string; values: number[]; color: string};
+type TrendLegend = {label: string; value: string; color?: string};
+
+function TrendChart({title, description, points, series, legend}: {
+  title: string;
+  description: string;
+  points: AnalyticsDailyPoint[];
+  series: TrendSeries[];
+  legend: TrendLegend[];
+}) {
+  const width = 720;
+  const height = 230;
+  const left = 44;
+  const right = 14;
+  const top = 16;
+  const bottom = 34;
+  const chartWidth = width - left - right;
+  const chartHeight = height - top - bottom;
+  const maximum = Math.max(1, ...series.flatMap(item => item.values));
+  const x = (index: number) => left + (points.length <= 1 ? chartWidth / 2 : index * chartWidth / (points.length - 1));
+  const y = (value: number) => top + chartHeight - value / maximum * chartHeight;
+  const labelEvery = Math.max(1, Math.ceil(points.length / 6));
+  return <section className="analytics-chart card">
+    <div className="analytics-chart-heading"><div><h2>{title}</h2><p>{description}</p></div><BarChart3 size={20}/></div>
+    <div className="analytics-chart-layout">
+      <div className="analytics-plot">
+        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${title} daily trend`}>
+          {[0, .25, .5, .75, 1].map(step => { const gridY = top + chartHeight * (1 - step); return <g key={step}><line x1={left} x2={width - right} y1={gridY} y2={gridY}/><text x={left - 8} y={gridY + 4} textAnchor="end">{formatMetric(maximum * step)}</text></g>; })}
+          {series.map(item => <path key={item.label} d={item.values.map((value, index) => `${index ? 'L' : 'M'} ${x(index)} ${y(value)}`).join(' ')} fill="none" stroke={item.color} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round"/>)}
+          {series.flatMap(item => item.values.map((value, index) => <circle key={`${item.label}-${index}`} cx={x(index)} cy={y(value)} r="3.5" fill={item.color}><title>{`${points[index]?.date}: ${item.label} ${formatMetric(value)}`}</title></circle>))}
+          {points.map((point, index) => (index % labelEvery === 0 || index === points.length - 1) ? <text className="analytics-date-label" key={point.date} x={x(index)} y={height - 7} textAnchor={index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'}>{new Date(`${point.date}T00:00:00`).toLocaleDateString(undefined, {month:'short', day:'numeric'})}</text> : null)}
+        </svg>
+      </div>
+      <div className="analytics-legend">{legend.map(item => <div key={item.label}><i style={{background:item.color || 'var(--brand)'}}/><span><small>{item.label}</small><b>{item.value}</b></span></div>)}</div>
+    </div>
+  </section>;
 }
 
 export function shouldAutoExpandImport(total: number, query: string): boolean {
@@ -221,7 +264,7 @@ export function App() {
   const [listLoading, setListLoading] = useState(true);
   const [libraryError, setLibraryError] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [view, setView] = useState<'knowledge' | 'sessions' | 'companies'>('knowledge');
+  const [view, setView] = useState<'analytics' | 'knowledge' | 'sessions' | 'companies'>('knowledge');
   const [companies, setCompanies] = useState<Company[]>([]);
   const [llmOptions, setLLMOptions] = useState<LLMOption[]>([]);
   const [activeCompanyId, setActiveCompanyId] = useState('');
@@ -239,6 +282,11 @@ export function App() {
   const [chatSessionDeleteBusy, setChatSessionDeleteBusy] = useState(false);
   const [chatSessionFrom, setChatSessionFrom] = useState(() => dateInputValue(new Date(Date.now() - 6 * 86_400_000)));
   const [chatSessionTo, setChatSessionTo] = useState(() => dateInputValue(new Date()));
+  const [analyticsFrom, setAnalyticsFrom] = useState(() => dateInputValue(new Date(Date.now() - 13 * 86_400_000)));
+  const [analyticsTo, setAnalyticsTo] = useState(() => dateInputValue(new Date()));
+  const [analytics, setAnalytics] = useState<ChatAnalytics | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState('');
   const [companyDraft, setCompanyDraft] = useState<Partial<Company> & Pick<Company, 'name'>>(() => emptyCompany());
   const [companyBusy, setCompanyBusy] = useState(false);
   const [companyError, setCompanyError] = useState('');
@@ -252,6 +300,7 @@ export function App() {
   const selectAllChatSessionsInput = useRef<HTMLInputElement>(null);
   const listRequest = useRef(0);
   const chatSessionRequest = useRef(0);
+  const analyticsRequest = useRef(0);
   const importInitializedFor = useRef('');
   const activeCompany = companies.find(company => company.id === activeCompanyId);
   const mapsLink = safeExternalUrl(companyDraft.maps_url);
@@ -300,6 +349,22 @@ export function App() {
     }
   }, [chatSessionPageSize]);
 
+  const loadAnalytics = useCallback(async (companyId: string, dateFrom: string, dateTo: string) => {
+    if (!companyId || !dateFrom || !dateTo) { setAnalytics(null); setAnalyticsLoading(false); return; }
+    const requestId = ++analyticsRequest.current;
+    setAnalyticsLoading(true); setAnalyticsError('');
+    try {
+      const result = await getAnalytics(companyId, dateFrom, dateTo);
+      if (requestId === analyticsRequest.current) setAnalytics(result);
+    } catch (err) {
+      if (requestId !== analyticsRequest.current) return;
+      setAnalytics(null);
+      setAnalyticsError(err instanceof Error ? err.message : 'Could not load analytics');
+    } finally {
+      if (requestId === analyticsRequest.current) setAnalyticsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     listCompanies().then(result => {
       setCompanies(result);
@@ -328,6 +393,10 @@ export function App() {
     if (view !== 'sessions') return;
     void loadChatSessionPage(chatSessionPage, activeCompanyId, chatSessionFrom, chatSessionTo);
   }, [activeCompanyId, chatSessionFrom, chatSessionPage, chatSessionTo, loadChatSessionPage, view]);
+  useEffect(() => {
+    if (view !== 'analytics') return;
+    void loadAnalytics(activeCompanyId, analyticsFrom, analyticsTo);
+  }, [activeCompanyId, analyticsFrom, analyticsTo, loadAnalytics, view]);
   useEffect(() => {
     if (!error) return;
     const timeout = window.setTimeout(() => setError(''), MESSAGE_TIMEOUT_MS);
@@ -453,13 +522,19 @@ export function App() {
     if (companyLogoInput.current) companyLogoInput.current.value = '';
   }
 
-  function navigateFromMenu(target: 'knowledge' | 'sessions' | 'companies') {
+  function navigateFromMenu(target: 'analytics' | 'knowledge' | 'sessions' | 'companies') {
     setConfirmation(null);
     setCompanyToDelete(null);
     setChatSessionsToDelete(null);
     setDeleteAllFilteredSessions(false);
     setSelectedChatSessionIds(new Set());
-    if (target === 'knowledge') {
+    if (target === 'analytics') {
+      const now = Date.now();
+      setAnalytics(null);
+      setAnalyticsError('');
+      setAnalyticsFrom(dateInputValue(new Date(now - 13 * 86_400_000)));
+      setAnalyticsTo(dateInputValue(new Date(now)));
+    } else if (target === 'knowledge') {
       reset();
       setSearch('');
       setPage(1);
@@ -685,12 +760,12 @@ export function App() {
   return <div className={dark ? 'app dark' : 'app'}>
     <aside>
       <div className="brand"><div className="brand-mark"><Layers3 size={20}/></div><span>Omni<span>RAG</span></span></div>
-      <nav><button className={view === 'knowledge' ? 'active' : ''} onClick={() => navigateFromMenu('knowledge')}><Library size={18}/>Knowledge Studio</button><button className={view === 'sessions' ? 'active' : ''} onClick={() => navigateFromMenu('sessions')}><MessageSquareText size={18}/>Chat Sessions</button><button className={view === 'companies' ? 'active' : ''} onClick={() => navigateFromMenu('companies')}><Building2 size={18}/>Companies</button></nav>
+      <nav><button className={view === 'analytics' ? 'active' : ''} onClick={() => navigateFromMenu('analytics')}><BarChart3 size={18}/>Analytics</button><button className={view === 'knowledge' ? 'active' : ''} onClick={() => navigateFromMenu('knowledge')}><Library size={18}/>Knowledge Studio</button><button className={view === 'sessions' ? 'active' : ''} onClick={() => navigateFromMenu('sessions')}><MessageSquareText size={18}/>Chat Sessions</button><button className={view === 'companies' ? 'active' : ''} onClick={() => navigateFromMenu('companies')}><Building2 size={18}/>Companies</button></nav>
       <div className="aside-tip"><Sparkles size={18}/><b>Local & private</b><p>Your documents stay within your infrastructure.</p></div>
       <div className="profile"><div className="avatar">AM</div><div><b>Admin workspace</b><small>Local environment</small></div><ChevronDown size={16}/></div>
     </aside>
     <main>
-      <header><div><p className="eyebrow">{view === 'knowledge' ? 'KNOWLEDGE STUDIO' : view === 'sessions' ? 'CHAT SESSIONS' : 'COMPANIES'}</p><h1>{view === 'knowledge' ? 'Build a source of truth' : view === 'sessions' ? 'Review conversations' : 'Manage companies'}</h1><p>{view === 'knowledge' ? 'Turn your documents into precise, citation-ready knowledge.' : view === 'sessions' ? 'Inspect company chatbot sessions and read-only conversation history.' : 'Configure chatbot identity, contact details, and company context.'}</p></div><div className="header-actions"><button className="icon-button" onClick={() => setDark(!dark)} aria-label="Toggle theme">{dark ? <Sun size={18}/> : <Moon size={18}/>}</button><button className="secondary"><BookOpen size={17}/>Documentation</button></div></header>
+      <header><div><p className="eyebrow">{view === 'analytics' ? 'ANALYTICS' : view === 'knowledge' ? 'KNOWLEDGE STUDIO' : view === 'sessions' ? 'CHAT SESSIONS' : 'COMPANIES'}</p><h1>{view === 'analytics' ? 'Understand chatbot usage' : view === 'knowledge' ? 'Build a source of truth' : view === 'sessions' ? 'Review conversations' : 'Manage companies'}</h1><p>{view === 'analytics' ? 'Track conversations, messages, and model token consumption over time.' : view === 'knowledge' ? 'Turn your documents into precise, citation-ready knowledge.' : view === 'sessions' ? 'Inspect company chatbot sessions and read-only conversation history.' : 'Configure chatbot identity, contact details, and company context.'}</p></div><div className="header-actions"><button className="icon-button" onClick={() => setDark(!dark)} aria-label="Toggle theme">{dark ? <Sun size={18}/> : <Moon size={18}/>}</button><button className="secondary"><BookOpen size={17}/>Documentation</button></div></header>
 
       {view === 'knowledge' ? <>
       {activeCompany ? <section className="company-context-bar">
@@ -766,7 +841,31 @@ export function App() {
         <div className="session-table" aria-busy={chatSessionsLoading}><div className="session-table-head"><label className="kb-select"><input ref={selectAllChatSessionsInput} type="checkbox" checked={allChatSessionsSelected} onChange={toggleAllChatSessions} disabled={chatSessions.length === 0 || chatSessionsLoading || chatSessionDeleteBusy} aria-label="Select all chat sessions on this page"/><span/></label><span>Started</span><span>Status</span><span>Messages</span><span>Duration</span><span>IP address</span><span/></div>{chatSessionsLoading ? <div className="session-empty">Loading chat sessions…</div> : chatSessions.length === 0 ? <div className="session-empty"><MessageSquareText size={24}/><b>{activeCompany ? 'No sessions in this date range' : 'Select a company'}</b><span>{activeCompany ? 'Try another date range or launch the chatbot to begin a conversation.' : 'Choose a company above to review its conversations.'}</span></div> : chatSessions.map(session => <div className={`session-row ${selectedChatSessionIds.has(session.id) ? 'selected' : ''}`} key={session.id}><label className="kb-select"><input type="checkbox" checked={selectedChatSessionIds.has(session.id)} onChange={() => toggleChatSession(session.id)} disabled={chatSessionDeleteBusy} aria-label={`Select chat session from ${formatCreatedAt(session.created_at)}`}/><span/></label><time dateTime={session.created_at}>{formatCreatedAt(session.created_at)}</time><span className={`session-status ${session.status}`}>{session.status}</span><span>{session.message_count}</span><span title={session.ended_at ? `Ended ${formatCreatedAt(session.ended_at)}` : undefined}>{formatSessionDuration(session.created_at, session.ended_at)}</span><span>{session.ip_address || 'Unavailable'}</span><button disabled={chatSessionDeleteBusy} onClick={() => reviewChatSession(session)} aria-label={`View chat session from ${formatCreatedAt(session.created_at)}`}><Eye size={15}/>View chat</button></div>)}</div>
         {chatSessionTotalPages > 1 && <div className="pagination" role="navigation" aria-label="Chat-session pages"><span>Page {chatSessionPage} of {chatSessionTotalPages}</span><div><button disabled={chatSessionPage === 1 || chatSessionsLoading} onClick={() => setChatSessionPage(current => current - 1)}><ArrowLeft size={15}/>Previous</button><button disabled={chatSessionPage >= chatSessionTotalPages || chatSessionsLoading} onClick={() => setChatSessionPage(current => current + 1)}>Next<ArrowRight size={15}/></button></div></div>}
       </section>}
-      </> : <section className="company-workspace">
+      </> : view === 'analytics' ? <section className="analytics-dashboard">
+        <div className="analytics-filters card">
+          <div><p className="eyebrow">DASHBOARD SCOPE</p><h2>Company performance</h2><span>Select one company and up to 90 days.</span></div>
+          <div className="analytics-filter-controls">
+            <label><span><Building2 size={14}/>Company</span><select value={activeCompanyId} onChange={event => setActiveCompanyId(event.target.value)}><option value="" disabled>Choose company…</option>{companies.map(company => <option value={company.id} key={company.id}>{company.name}</option>)}</select></label>
+            <label><span><CalendarDays size={14}/>From</span><input type="date" value={analyticsFrom} min={shiftDateInput(analyticsTo, -(MAX_ANALYTICS_DATE_RANGE_DAYS - 1))} max={analyticsTo} onChange={event => { const value = event.target.value; setAnalyticsFrom(value); if (value && analyticsTo > shiftDateInput(value, MAX_ANALYTICS_DATE_RANGE_DAYS - 1)) setAnalyticsTo(shiftDateInput(value, MAX_ANALYTICS_DATE_RANGE_DAYS - 1)); }}/></label>
+            <label><span>To</span><input type="date" value={analyticsTo} min={analyticsFrom} max={shiftDateInput(analyticsFrom, MAX_ANALYTICS_DATE_RANGE_DAYS - 1)} onChange={event => { const value = event.target.value; setAnalyticsTo(value); if (value && analyticsFrom < shiftDateInput(value, -(MAX_ANALYTICS_DATE_RANGE_DAYS - 1))) setAnalyticsFrom(shiftDateInput(value, -(MAX_ANALYTICS_DATE_RANGE_DAYS - 1))); }}/></label>
+            <button className={`analytics-refresh ${analyticsLoading ? 'loading' : ''}`} disabled={analyticsLoading || !activeCompanyId || !analyticsFrom || !analyticsTo} onClick={() => void loadAnalytics(activeCompanyId, analyticsFrom, analyticsTo)} aria-label="Refresh analytics" title="Refresh analytics"><RefreshCw size={16}/></button>
+          </div>
+        </div>
+        {analyticsError && <div className="notice error">{analyticsError}</div>}
+        {!activeCompanyId ? <div className="analytics-empty card"><BarChart3 size={28}/><b>Select a company to view analytics</b><span>Usage metrics and daily trends are isolated by company.</span></div> : analyticsLoading && !analytics ? <div className="analytics-empty card"><RefreshCw className="loading" size={25}/><b>Loading analytics…</b><span>Aggregating sessions, messages, and token usage.</span></div> : analytics && <>
+          <div className="analytics-metrics">
+            <article className="analytics-metric card"><span className="metric-icon sessions"><Activity size={19}/></span><div><small>Sessions</small><b>{formatMetric(analytics.session_count)}</b><p>Created in selected period</p></div></article>
+            <article className="analytics-metric card"><span className="metric-icon messages"><MessageSquareText size={19}/></span><div><small>Messages</small><b>{formatMetric(analytics.message_count)}</b><p>Including chatbot greetings</p></div></article>
+            <article className="analytics-metric card"><span className="metric-icon average"><Gauge size={19}/></span><div><small>Avg messages / session</small><b>{formatMetric(analytics.average_messages_per_session, 2)}</b><p>Across all sessions</p></div></article>
+            <article className="analytics-metric card"><span className="metric-icon tokens"><Coins size={19}/></span><div><small>Total tokens</small><b>{formatMetric(analytics.input_tokens + analytics.output_tokens)}</b><p>{formatMetric(analytics.input_tokens)} input · {formatMetric(analytics.output_tokens)} output</p></div></article>
+          </div>
+          <div className="analytics-charts">
+            <TrendChart title="Session Counts Trend" description="Daily chatbot sessions" points={analytics.daily} series={[{label:'Sessions', values:analytics.daily.map(point => point.session_count), color:'#2f7652'}]} legend={[{label:'Total sessions', value:formatMetric(analytics.session_count), color:'#2f7652'}, {label:'Daily average', value:formatMetric(analytics.daily.length ? analytics.session_count / analytics.daily.length : 0, 2), color:'#8ab69d'}]}/>
+            <TrendChart title="Total Message Counts Trend" description="Daily user, bot, and greeting messages" points={analytics.daily} series={[{label:'Messages', values:analytics.daily.map(point => point.message_count), color:'#557bc1'}]} legend={[{label:'Total messages', value:formatMetric(analytics.message_count), color:'#557bc1'}, {label:'Avg message count', value:formatMetric(analytics.average_messages_per_session, 2), color:'#92a9d5'}]}/>
+            <TrendChart title="Total Token Counts Trend" description="Daily model input and output usage" points={analytics.daily} series={[{label:'Total', values:analytics.daily.map(point => point.input_tokens + point.output_tokens), color:'#2f7652'}, {label:'Input', values:analytics.daily.map(point => point.input_tokens), color:'#557bc1'}, {label:'Output', values:analytics.daily.map(point => point.output_tokens), color:'#d88742'}]} legend={[{label:'Total tokens', value:formatMetric(analytics.input_tokens + analytics.output_tokens), color:'#2f7652'}, {label:'Input tokens', value:formatMetric(analytics.input_tokens), color:'#557bc1'}, {label:'Output tokens', value:formatMetric(analytics.output_tokens), color:'#d88742'}]}/>
+          </div>
+        </>}
+      </section> : <section className="company-workspace">
         <form className="company-form card" onSubmit={submitCompany}>
           <div className="card-title"><div><p className="eyebrow">{companyDraft.id ? 'EDIT COMPANY' : 'NEW COMPANY'}</p><h2>{companyDraft.id ? companyDraft.name : 'Company profile'}</h2></div>{companyDraft.id && <button type="button" className="icon-button" onClick={resetCompanyEditor} aria-label="Cancel editing"><X size={17}/></button>}</div>
           <div className="company-identity-fields"><div className="company-logo-upload"><div className="company-logo-picker-wrap"><button type="button" className="company-logo-picker" onClick={() => companyLogoInput.current?.click()} aria-label="Choose company logo"><span className="company-logo-preview">{companyLogoPreview ? <img src={companyLogoPreview} alt="Selected company logo"/> : companyDraft.has_logo && !removeLogo && companyDraft.id ? <img src={companyLogoUrl(companyDraft.id)} alt="Current company logo"/> : <Building2 size={31}/>}<i><ImagePlus size={15}/></i></span></button>{companyDraft.has_logo && !companyLogo && <button type="button" className={`logo-remove-action ${removeLogo ? 'undo' : ''}`} onClick={() => setRemoveLogo(current => !current)} aria-label={removeLogo ? 'Keep existing logo' : 'Remove existing logo'} title={removeLogo ? 'Keep existing logo' : 'Remove existing logo'}>{removeLogo ? <RotateCcw size={14}/> : <Trash2 size={14}/>}</button>}</div><span>{companyLogo ? companyLogo.name : removeLogo ? 'Logo will be removed' : 'Choose logo'}</span><input ref={companyLogoInput} hidden type="file" accept="image/png,image/svg+xml,image/jpeg" onChange={event => chooseCompanyLogo(event.target.files?.[0])}/></div><label className="company-name-field">Company name<input required minLength={2} value={companyDraft.name} onChange={event => setCompanyDraft(current => ({...current, name:event.target.value}))}/><small>Logo: PNG, SVG or JPEG · max 512 KB</small></label></div>

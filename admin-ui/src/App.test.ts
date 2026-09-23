@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chatbotLaunchUrl, dateInputValue, formatClock, formatCreatedAt, formatSessionDuration, isUrlMime, maskApiKey, providerLabel, rangeToPages, shiftDateInput, shouldAutoExpandImport, supportsUrlImport, validateGreetingTemplate } from './App';
+import { chatbotLaunchUrl, dateInputValue, formatClock, formatCreatedAt, formatMetric, formatSessionDuration, isUrlMime, maskApiKey, providerLabel, rangeToPages, shiftDateInput, shouldAutoExpandImport, supportsUrlImport, validateGreetingTemplate } from './App';
 describe('chatbotLaunchUrl', () => { it('creates a session-specific chat URL', () => { expect(chatbotLaunchUrl('session/a', 'https://chat.example.test')).toBe('https://chat.example.test?session_id=session%2Fa'); }); });
 describe('rangeToPages', () => { it('parses and clamps page ranges', () => { expect(rangeToPages('1-3, 7, 12-15, nope', 12)).toEqual([1,2,3,7,12]); }); });
 describe('formatCreatedAt', () => { it('formats a stored creation timestamp', () => { expect(formatCreatedAt('2026-09-16T10:30:00Z')).toContain('2026'); }); });
@@ -13,6 +13,12 @@ describe('chat session dates', () => {
     expect(formatSessionDuration('2026-09-17T10:00:00Z', '2026-09-17T10:00:01Z')).toBe('1 sec');
     expect(formatSessionDuration('2026-09-17T10:00:00Z', '2026-09-17T10:02:01Z')).toBe('2 mins 1 sec');
     expect(formatSessionDuration('2026-09-17T10:00:00Z')).toBe('-');
+  });
+});
+describe('analytics metrics', () => {
+  it('formats whole and fractional metric values', () => {
+    expect(formatMetric(1200)).toMatch(/1[,.]200/);
+    expect(formatMetric(2.345, 2)).toMatch(/2[,.]35/);
   });
 });
 describe('shouldAutoExpandImport', () => {

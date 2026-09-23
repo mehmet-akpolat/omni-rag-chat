@@ -11,6 +11,8 @@ export interface KnowledgeBase { id: string; company_id: string; name: string; s
 export interface KnowledgeBasePage { items: KnowledgeBase[]; page: number; page_size: number; total: number; total_pages: number }
 export type ChatSessionStatus = 'active' | 'closed' | 'timeout';
 export interface ChatSession { id: string; company_id: string; status: ChatSessionStatus; ip_address: string; created_at: string; ended_at?: string; message_count: number }
-export interface ChatSessionMessage { id: string; session_id: string; owner: 'bot' | 'user'; content: string; created_at: string }
+export interface ChatSessionMessage { id: string; session_id: string; owner: 'bot' | 'user'; content: string; input_tokens: number; output_tokens: number; created_at: string }
 export interface ChatSessionPage { items: ChatSession[]; page: number; page_size: number; total: number; total_pages: number }
 export interface ChatSessionDetail { session: ChatSession; messages: ChatSessionMessage[] }
+export interface AnalyticsDailyPoint { date: string; session_count: number; message_count: number; input_tokens: number; output_tokens: number }
+export interface ChatAnalytics { company_id: string; date_from: string; date_to: string; session_count: number; message_count: number; average_messages_per_session: number; input_tokens: number; output_tokens: number; daily: AnalyticsDailyPoint[] }

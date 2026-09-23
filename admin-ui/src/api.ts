@@ -1,4 +1,4 @@
-import type { ChatSessionDetail, ChatSessionPage, Company, KnowledgeBase, KnowledgeBasePage, LLMOption, Preview, Strategy } from './types';
+import type { ChatAnalytics, ChatSessionDetail, ChatSessionPage, Company, KnowledgeBase, KnowledgeBasePage, LLMOption, Preview, Strategy } from './types';
 const BASE = import.meta.env.VITE_ADMIN_API_URL || 'http://localhost:8001/api/v1';
 const CHAT_BASE = import.meta.env.VITE_CHAT_API_URL || 'http://localhost:8002/api/v1';
 
@@ -32,6 +32,10 @@ export async function createChatSession(companyId: string): Promise<{session: Ch
 export async function listChatSessions(companyId: string, dateFrom: string, dateTo: string, page = 1, pageSize = 20): Promise<ChatSessionPage> {
   const query = new URLSearchParams({company_id:companyId, date_from:dateFrom, date_to:dateTo, page:String(page), page_size:String(pageSize)});
   return checked(await fetch(`${BASE}/chat-sessions?${query}`));
+}
+export async function getAnalytics(companyId: string, dateFrom: string, dateTo: string): Promise<ChatAnalytics> {
+  const query = new URLSearchParams({company_id:companyId, date_from:dateFrom, date_to:dateTo});
+  return checked(await fetch(`${BASE}/analytics?${query}`));
 }
 export async function getChatSession(id: string): Promise<ChatSessionDetail> { return checked(await fetch(`${BASE}/chat-sessions/${encodeURIComponent(id)}`)); }
 export async function deleteChatSessions(companyId: string, sessionIds: string[]): Promise<{deleted: number}> {

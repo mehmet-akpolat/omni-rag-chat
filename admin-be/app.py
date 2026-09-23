@@ -12,6 +12,7 @@ from packages.omni_rag_core.ai import OllamaClient
 from packages.omni_rag_core.credentials import CredentialEncryptionError
 from packages.omni_rag_core.documents import DocumentStore, InvalidDocument
 from packages.omni_rag_core.domain import (
+    ChatAnalytics,
     ChunkingStrategy,
     ChatSession,
     ChatSessionMessage,
@@ -45,6 +46,7 @@ from packages.omni_rag_core.web_documents import WebDocumentFetcher
 MAX_UPLOAD_BYTES = 40 * 1024 * 1024
 MAX_LOGO_BYTES = 512 * 1024
 MAX_CHAT_SESSION_DATE_RANGE_DAYS = 14
+MAX_ANALYTICS_DATE_RANGE_DAYS = 90
 LOGO_MIME_TYPES = {"image/png", "image/jpeg", "image/svg+xml"}
 
 
@@ -448,6 +450,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             page_size=page_size,
             total=total,
             total_pages=(total + page_size - 1) // page_size,
+        )
+
+    @app.get("/api/v1/analytics", response_model=ChatAnalytics)
+    def get_analytics(
+        request: Request,
+        company_id: str = Query(...),
+        date_from: date = Query(...),
+        date_to: date = Query(...),
+    ) -> ChatAnalytics:
+        repository = request.app.state.repository
+        if not repository.get_company(company_id):
+            raise HTTPException(404, "Company not found")
+        if date_from > date_to:
+            raise HTTPException(422, "date_from must not be after date_to")
+        if (date_to - date_from).days >= MAX_ANALYTICS_DATE_RANGE_DAYS:
+            raise HTTPException(
+                422,
+                f"Analytics date range cannot exceed {MAX_ANALYTICS_DATE_RANGE_DAYS} days",
+            )
+        created_from = datetime.combine(date_from, time.min, tzinfo=timezone.utc)
+        created_to = datetime.combine(
+            date_to + timedelta(days=1), time.min, tzinfo=timezone.utc
+        )
+        return repository.get_chat_analytics(
+            company_id,
+            created_from=created_from,
+            created_to=created_to,
         )
 
     @app.get("/api/v1/chat-sessions/{session_id}", response_model=ChatSessionDetail)
