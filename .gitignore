@@ -1,4 +1,5 @@
 # Byte-compiled / optimized / DLL files
+.DS_Store
 __pycache__/
 *.py[codz]
 *$py.class
@@ -149,8 +150,13 @@ activemq-data/
 
 # Environments
 .env
+.data/
+node_modules/
+*/node_modules/
+*/dist/
 .envrc
 .venv
+.uv-cache/
 env/
 venv/
 ENV/
