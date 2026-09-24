@@ -1,0 +1,12 @@
+{
+  "name": "omni-rag-chat",
+  "private": true,
+  "workspaces": ["admin-ui", "chatbot-ui"],
+  "scripts": {
+    "dev:admin": "npm --workspace admin-ui run dev",
+    "dev:chat": "npm --workspace chatbot-ui run dev",
+    "build": "npm run build --workspaces",
+    "test:ui": "npm run test --workspaces --if-present"
+  }
+}
+

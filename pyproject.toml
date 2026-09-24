@@ -1,0 +1,42 @@
+[project]
+name = "omni-rag-chat"
+version = "1.0.0"
+description = "Local-first PDF and web-page ingestion with a cited RAG chatbot"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "cryptography==45.0.7",
+    "fastapi==0.116.1",
+    "httpx==0.28.1",
+    "psycopg[binary]==3.2.9",
+    "pydantic-settings==2.10.1",
+    "pypdf==5.9.0",
+    "python-multipart==0.0.20",
+    "qdrant-client==1.15.1",
+    "sqlalchemy==2.0.43",
+    "uvicorn[standard]==0.35.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==8.4.1",
+    "pytest-cov==6.2.1",
+    "ruff==0.12.10",
+]
+
+[tool.uv]
+package = false
+required-version = ">=0.11.20"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=packages/omni_rag_core --cov=admin-be --cov=chatbot-be --cov-report=term-missing --cov-fail-under=90"
+pythonpath = ["."]
+
+[tool.coverage.run]
+branch = true
+omit = ["*/__init__.py", "*/main.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

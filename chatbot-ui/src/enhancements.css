@@ -1,0 +1,123 @@
+button:not(:disabled),
+a[href],
+select:not(:disabled),
+summary,
+[role="button"]:not([aria-disabled="true"]),
+label:has(input[type="checkbox"]:not(:disabled)),
+label:has(input[type="radio"]:not(:disabled)) {
+  cursor: pointer;
+}
+
+button:not(:disabled):hover,
+a[href]:hover,
+[role="button"]:not([aria-disabled="true"]):hover {
+  outline: 1px solid color-mix(in srgb, currentColor 72%, transparent);
+  outline-offset: 1px;
+}
+
+.send:hover,
+.launcher:hover,
+.session-dialog button:hover {
+  outline-color: var(--green);
+}
+
+.source-picker > button:hover {
+  outline: none;
+}
+
+button:disabled,
+select:disabled,
+input[type="checkbox"]:disabled,
+input[type="radio"]:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+.message .bubble a {
+  color: var(--green);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.message.user .bubble a {
+  color: white;
+}
+
+.citations summary > a {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  text-decoration: underline;
+  text-overflow: ellipsis;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+
+.logo > div img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 9px;
+}
+
+.chat-company-select {
+  max-width: 150px;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.avatar-tone-bot {
+  --avatar-bg: #e5f1e9;
+  --avatar-color: #255f43;
+}
+
+.avatar-tone-brain {
+  --avatar-bg: #eee9fb;
+  --avatar-color: #7051a8;
+}
+
+.avatar-tone-headset {
+  --avatar-bg: #e5eefb;
+  --avatar-color: #356da8;
+}
+
+.avatar-tone-book {
+  --avatar-bg: #fff0dc;
+  --avatar-color: #a36a22;
+}
+
+.bot-badge.avatar-tone,
+.orb.avatar-tone {
+  background: var(--avatar-bg);
+  color: var(--avatar-color);
+}
+
+.assistant-icon.avatar-tone,
+.launcher.avatar-tone {
+  background: var(--avatar-color);
+  color: white;
+}
+
+.orb.avatar-tone {
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--avatar-color) 18%, transparent);
+}
+
+.welcome .greeting {
+  max-width: 620px;
+  margin: 10px auto 8px;
+  color: var(--text);
+  font: 600 15px/1.55 Manrope, sans-serif;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 740px) {
+  .chat-company-select { max-width: 105px; }
+}
