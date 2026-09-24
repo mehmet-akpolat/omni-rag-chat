@@ -1,0 +1,20 @@
+FROM node:24-alpine AS build
+ARG APP_DIR
+ARG VITE_ADMIN_API_URL
+ARG VITE_CHAT_API_URL
+ARG VITE_CHATBOT_UI_URL
+ARG VITE_CHAT_IDLE_SECONDS
+ENV VITE_ADMIN_API_URL=$VITE_ADMIN_API_URL VITE_CHAT_API_URL=$VITE_CHAT_API_URL VITE_CHATBOT_UI_URL=$VITE_CHATBOT_UI_URL VITE_CHAT_IDLE_SECONDS=$VITE_CHAT_IDLE_SECONDS
+WORKDIR /app
+COPY package.json ./
+COPY admin-ui/package.json admin-ui/package.json
+COPY chatbot-ui/package.json chatbot-ui/package.json
+RUN npm install
+COPY admin-ui admin-ui
+COPY chatbot-ui chatbot-ui
+RUN npm --workspace ${APP_DIR} run build
+
+FROM nginx:1.29-alpine
+ARG APP_DIR
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/${APP_DIR}/dist /usr/share/nginx/html

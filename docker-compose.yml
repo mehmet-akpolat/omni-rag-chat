@@ -1,0 +1,101 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-omni_rag}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports: ["5432:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d omni_rag"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.3
+    ports: ["6333:6333", "6334:6334"]
+    volumes: ["qdrant_data:/qdrant/storage"]
+
+  admin-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args: {SERVICE_DIR: admin-be}
+    environment:
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/omni_rag}
+      QDRANT_URL: ${DOCKER_QDRANT_URL:-http://qdrant:6333}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-knowledge_chunks}
+      OLLAMA_URL: ${DOCKER_OLLAMA_URL:-http://host.docker.internal:11434}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      OPENAI_MODELS: ${OPENAI_MODELS:-gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol}
+      ANTHROPIC_MODELS: ${ANTHROPIC_MODELS:-claude-haiku-4-5-20251001,claude-sonnet-5,claude-opus-5}
+      HUGGINGFACE_MODELS: ${HUGGINGFACE_MODELS:-Qwen3.8-27B,DeepSeek-R1,DeepSeek-V4.1-Flash,gemma4-31B}
+      OLLAMA_MODELS: ${OLLAMA_MODELS:-gemma4:12b}
+      LLM_CREDENTIALS_KEY: ${LLM_CREDENTIALS_KEY:-}
+      UPLOAD_DIR: ${DOCKER_UPLOAD_DIR:-/app/.data/uploads}
+      WEB_FETCH_TIMEOUT: ${WEB_FETCH_TIMEOUT:-15}
+      WEB_FETCH_MAX_BYTES: ${WEB_FETCH_MAX_BYTES:-5242880}
+      WEB_FETCH_MAX_REDIRECTS: ${WEB_FETCH_MAX_REDIRECTS:-5}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:5174}
+    ports: ["8001:8000"]
+    volumes: ["uploads:/app/.data/uploads"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      qdrant: {condition: service_started}
+
+  chatbot-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args: {SERVICE_DIR: chatbot-be}
+    environment:
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/omni_rag}
+      QDRANT_URL: ${DOCKER_QDRANT_URL:-http://qdrant:6333}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-knowledge_chunks}
+      OLLAMA_URL: ${DOCKER_OLLAMA_URL:-http://host.docker.internal:11434}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      OPENAI_API_URL: ${OPENAI_API_URL:-https://api.openai.com/v1}
+      ANTHROPIC_API_URL: ${ANTHROPIC_API_URL:-https://api.anthropic.com/v1}
+      HUGGINGFACE_API_URL: ${HUGGINGFACE_API_URL:-https://router.huggingface.co/v1}
+      OPENAI_MODELS: ${OPENAI_MODELS:-gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol}
+      ANTHROPIC_MODELS: ${ANTHROPIC_MODELS:-claude-haiku-4-5-20251001,claude-sonnet-5,claude-opus-5}
+      HUGGINGFACE_MODELS: ${HUGGINGFACE_MODELS:-Qwen3.8-27B,DeepSeek-R1,DeepSeek-V4.1-Flash,gemma4-31B}
+      OLLAMA_MODELS: ${OLLAMA_MODELS:-gemma4:12b}
+      LLM_CREDENTIALS_KEY: ${LLM_CREDENTIALS_KEY:-}
+      CHAT_SESSION_MINUTES: ${CHAT_SESSION_MINUTES:-10}
+      CHAT_SESSION_SWEEP_SECONDS: ${CHAT_SESSION_SWEEP_SECONDS:-5}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:5174}
+    ports: ["8002:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      qdrant: {condition: service_started}
+
+  admin-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+      args:
+        APP_DIR: admin-ui
+        VITE_ADMIN_API_URL: ${VITE_ADMIN_API_URL:-http://localhost:8001/api/v1}
+        VITE_CHAT_API_URL: ${VITE_CHAT_API_URL:-http://localhost:8002/api/v1}
+        VITE_CHATBOT_UI_URL: ${VITE_CHATBOT_UI_URL:-http://localhost:5174}
+    ports: ["5173:80"]
+    depends_on: [admin-api]
+
+  chatbot-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+      args:
+        APP_DIR: chatbot-ui
+        VITE_CHAT_API_URL: ${VITE_CHAT_API_URL:-http://localhost:8002/api/v1}
+        VITE_CHAT_IDLE_SECONDS: ${VITE_CHAT_IDLE_SECONDS:-60}
+    ports: ["5174:80"]
+    depends_on: [chatbot-api]
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  uploads:
